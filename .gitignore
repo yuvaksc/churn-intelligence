@@ -1,6 +1,3 @@
-docker/
 data/chroma_db
 models/
-.dockerignore
-docker-compose.yml
 verify.py

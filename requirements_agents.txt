@@ -1,28 +1,20 @@
-# requirements_agents.txt
-# Install from project root:  pip install -r requirements_agents.txt
-
 # LangChain + LangGraph
 langchain>=1.3.0
 langchain-core>=1.4.0
-langchain-google-genai>=4.2.2   # Gemini via Google AI Studio
+langchain-google-genai>=4.2.2
+langchain-groq>=1.1.0
 langgraph>=1.2.0
 
-# MCP server
+# MCP client (HTTP/SSE transport to mcp-server container)
 fastmcp>=0.1.0
+httpx>=0.28.1
 
 # Vector store + embeddings
 chromadb>=0.5.0
 sentence-transformers>=3.0.0
 
-# Google Gen AI SDK (new package)
+# Google Gen AI SDK
 google-genai>=1.75.0
 
 # Env management
 python-dotenv>=1.0.0
-
-# ── Alternatives (uncomment the one you use) ──────────────────────────────────
-# OpenRouter:
-# langchain-openai>=0.2.0
-
-# Groq:
-langchain-groq>=1.1.0

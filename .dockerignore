@@ -1,0 +1,22 @@
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.env
+.git/
+.gitignore
+*.md
+
+# Frontend build artifacts (rebuilt inside the container)
+frontend/node_modules/
+frontend/.next/
+frontend/.env.local
+
+# Large runtime directories — bind-mounted at runtime, never COPYed
+models/
+data/
+
+# Test/dev files
+evaluate.py
+verify.py
