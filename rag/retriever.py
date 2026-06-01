@@ -95,8 +95,10 @@ def _embed(text: str) -> np.ndarray:
     """Embed a query string using sentence-transformers (local, no API needed)."""
     global _st_model
     if _st_model is None:
+        os.environ["HF_HOME"] = "/tmp/hf_cache"
+        os.environ["TRANSFORMERS_CACHE"] = "/tmp/hf_cache"
         from sentence_transformers import SentenceTransformer
-        _st_model = SentenceTransformer("all-MiniLM-L6-v2")
+        _st_model = SentenceTransformer("all-MiniLM-L6-v2", cache_folder="/tmp/hf_cache")
     return _st_model.encode(text, convert_to_numpy=True).astype(np.float32)
 
 # ── Cosine similarity ─────────────────────────────────────────────────────────
