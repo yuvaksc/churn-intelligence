@@ -113,7 +113,7 @@ def log_retention_action(
                 "log_date":       now_iso[:10],
                 "log_id":         log_id,
                 "customer_id":    customer_id,
-                "risk_score":     Decimal(str(round(risk_score, 4))),
+                "risk_score":     str(round(risk_score, 4)),
                 "offer_text":     offer_text,
                 "contract_type":  contract_type,
                 "monthly_charge": Decimal(str(round(monthly_charge, 2))),
