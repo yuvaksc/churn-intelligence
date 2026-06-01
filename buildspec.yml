@@ -128,8 +128,33 @@ phases:
       - echo New versions - inference=$INFERENCE_NEW warroom=$WARROOM_NEW mcp=$MCP_NEW
       - echo Writing dynamic AppSpec files...
       - printf 'version:0.0\nResources:\n  - ChurnInference:\n      Type: AWS::Lambda::Function\n      Properties:\n        Name: churn-inference\n        Alias: prod\n        CurrentVersion: "%s"\n        TargetVersion: "%s"\n' "$INFERENCE_CURRENT" "$INFERENCE_NEW" > appspec-inference.yml
-      - printf 'version:0.0\nResources:\n  - ChurnWarroom:\n      Type: AWS::Lambda::Function\n      Properties:\n        Name: churn-warroom\n        Alias: prod\n        CurrentVersion: "%s"\n        TargetVersion: "%s"\n' "$WARROOM_CURRENT" "$WARROOM_NEW" > appspec-warroom.yml
-      - printf 'version:0.0\nResources:\n  - ChurnMcp:\n      Type: AWS::Lambda::Function\n      Properties:\n        Name: churn-mcp-tools\n        Alias: prod\n        CurrentVersion: "%s"\n        TargetVersion: "%s"\n' "$MCP_CURRENT" "$MCP_NEW" > appspec-mcp.yml
+      - echo "version:0.0" > appspec-inference.yml
+      - echo "Resources:" >> appspec-inference.yml
+      - echo "  - ChurnInference:" >> appspec-inference.yml
+      - echo "      Type: AWS::Lambda::Function" >> appspec-inference.yml
+      - echo "      Properties:" >> appspec-inference.yml
+      - echo "        Name: churn-inference" >> appspec-inference.yml
+      - echo "        Alias: prod" >> appspec-inference.yml
+      - echo "        CurrentVersion: $INFERENCE_CURRENT" >> appspec-inference.yml
+      - echo "        TargetVersion: $INFERENCE_NEW" >> appspec-inference.yml
+      - echo "version:0.0" > appspec-warroom.yml
+      - echo "Resources:" >> appspec-warroom.yml
+      - echo "  - ChurnWarroom:" >> appspec-warroom.yml
+      - echo "      Type: AWS::Lambda::Function" >> appspec-warroom.yml
+      - echo "      Properties:" >> appspec-warroom.yml
+      - echo "        Name: churn-warroom" >> appspec-warroom.yml
+      - echo "        Alias: prod" >> appspec-warroom.yml
+      - echo "        CurrentVersion: $WARROOM_CURRENT" >> appspec-warroom.yml
+      - echo "        TargetVersion: $WARROOM_NEW" >> appspec-warroom.yml
+      - echo "version:0.0" > appspec-mcp.yml
+      - echo "Resources:" >> appspec-mcp.yml
+      - echo "  - ChurnMcp:" >> appspec-mcp.yml
+      - echo "      Type: AWS::Lambda::Function" >> appspec-mcp.yml
+      - echo "      Properties:" >> appspec-mcp.yml
+      - echo "        Name: churn-mcp-tools" >> appspec-mcp.yml
+      - echo "        Alias: prod" >> appspec-mcp.yml
+      - echo "        CurrentVersion: $MCP_CURRENT" >> appspec-mcp.yml
+      - echo "        TargetVersion: $MCP_NEW" >> appspec-mcp.yml
       - echo Build complete - commit $COMMIT_HASH
       - echo Inference $IMAGE_URI:$COMMIT_HASH
       - echo MCP $MCP_IMAGE_URI:$COMMIT_HASH
