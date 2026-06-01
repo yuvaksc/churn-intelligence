@@ -54,9 +54,11 @@ phases:
       - "printf 'version: 0.0\\nResources:\\n  - ChurnInference:\\n      Type: AWS::Lambda::Function\\n      Properties:\\n        Name: churn-inference\\n        Alias: prod\\n        CurrentVersion: %s\\n        TargetVersion: %s\\n' $INFERENCE_CURRENT $INFERENCE_NEW > appspec-inference.yml"
       - "printf 'version: 0.0\\nResources:\\n  - ChurnWarroom:\\n      Type: AWS::Lambda::Function\\n      Properties:\\n        Name: churn-warroom\\n        Alias: prod\\n        CurrentVersion: %s\\n        TargetVersion: %s\\n' $WARROOM_CURRENT $WARROOM_NEW > appspec-warroom.yml"
       - "printf 'version: 0.0\\nResources:\\n  - ChurnMcp:\\n      Type: AWS::Lambda::Function\\n      Properties:\\n        Name: churn-mcp-tools\\n        Alias: prod\\n        CurrentVersion: %s\\n        TargetVersion: %s\\n' $MCP_CURRENT $MCP_NEW > appspec-mcp.yml"
+      - cp appspec-inference.yml appspec.yml
 
 artifacts:
   files:
+    - appspec.yml
     - appspec-inference.yml
     - appspec-warroom.yml
     - appspec-mcp.yml
