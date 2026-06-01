@@ -101,27 +101,37 @@ def log_retention_action(
 
     # In Lambda, write to DynamoDB. Locally, fall back to the JSONL file.
     if os.environ.get("AWS_LAMBDA_FUNCTION_NAME"):
-        import boto3
-        from decimal import Decimal
-        table_name = os.environ.get("DYNAMODB_TABLE", "churn-prod-main")
-        ddb = boto3.resource("dynamodb", region_name=os.environ.get("BEDROCK_REGION", "us-east-1"))
-        table = ddb.Table(table_name)
-        item = {
-            "PK":             f"LOG#{log_id}",
-            "SK":             f"CUSTOMER#{customer_id}",
-            "log_date":       now_iso[:10],
-            "log_id":         log_id,
-            "customer_id":    customer_id,
-            "risk_score":     Decimal(str(round(risk_score, 4))),
-            "offer_text":     offer_text,
-            "contract_type":  contract_type,
-            "monthly_charge": Decimal(str(round(monthly_charge, 2))),
-            "timestamp":      now_iso,
-            "status":         "PENDING_CONTACT",
-            "assigned_to":    "Retention Team Queue",
-            "ttl":            int(time.time()) + 60 * 60 * 24 * 30,
-        }
-        table.put_item(Item=item)
+        try:
+            import boto3
+            from decimal import Decimal
+            table_name = os.environ.get("DYNAMODB_TABLE", "churn-prod-main")
+            ddb = boto3.resource("dynamodb", region_name=os.environ.get("BEDROCK_REGION", "us-east-1"))
+            table = ddb.Table(table_name)
+            item = {
+                "PK":             f"LOG#{log_id}",
+                "SK":             f"CUSTOMER#{customer_id}",
+                "log_date":       now_iso[:10],
+                "log_id":         log_id,
+                "customer_id":    customer_id,
+                "risk_score":     Decimal(str(round(risk_score, 4))),
+                "offer_text":     offer_text,
+                "contract_type":  contract_type,
+                "monthly_charge": Decimal(str(round(monthly_charge, 2))),
+                "timestamp":      now_iso,
+                "status":         "PENDING_CONTACT",
+                "assigned_to":    "Retention Team Queue",
+                "ttl":            int(time.time()) + 60 * 60 * 24 * 30,
+            }
+            table.put_item(Item=item)
+        except Exception as e:
+            import traceback
+            print(f"[DYNAMODB ERROR] {e}", flush=True)
+            print(traceback.format_exc(), flush=True)
+            return {
+                "status":  "log_failed",
+                "log_id":  log_id,
+                "message": f"DynamoDB write failed: {str(e)}",
+            }
     else:
         LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
         with open(LOG_PATH, "a") as f:
