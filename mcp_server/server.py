@@ -124,9 +124,9 @@ def log_retention_action(
             }
             table.put_item(Item=item)
         except Exception as e:
-            import traceback
-            print(f"[DYNAMODB ERROR] {e}", flush=True)
-            print(traceback.format_exc(), flush=True)
+            import traceback, sys
+            print(f"[DYNAMODB ERROR] {e}", file=sys.stderr, flush=True)
+            print(traceback.format_exc(), file=sys.stderr, flush=True)
             return {
                 "status":  "log_failed",
                 "log_id":  log_id,
