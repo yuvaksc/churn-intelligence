@@ -1,0 +1,80 @@
+# docker-compose.yml
+#
+# docker-compose is the conductor. It reads this file and:
+#   - Builds the three images (if not already built)
+#   - Creates a private Docker network so containers find each other by name
+#   - Starts containers in dependency order
+#   - Forwards ports from the container to your machine
+#   - Mounts local directories into containers (volumes)
+#
+# KEY NETWORKING CONCEPT:
+#   Inside Docker's network, containers reach each other by SERVICE NAME.
+#   So the api container calls http://mcp-server:8001, NOT http://localhost:8001.
+#   From YOUR browser, you use localhost:8000 and localhost:3000 as usual.
+#
+# VOLUMES (bind mounts):
+#   ./models:/app/models means: your local ./models folder appears at
+#   /app/models inside the container. The container reads your actual pkl files.
+#   No rebuild needed when you retrain — just restart the api container.
+
+services:
+
+  # ── MCP Server ──────────────────────────────────────────────────────────────
+  mcp-server:
+    build:
+      context: .                          # build context = project root
+      dockerfile: docker/mcp.Dockerfile   # which Dockerfile to use
+    ports:
+      - "8001:8001"   # host_port:container_port
+                      # left side = your machine, right side = inside container
+    environment:
+      MCP_TRANSPORT: sse
+      MCP_PORT: "8001"
+      MCP_HOST: "0.0.0.0"
+    volumes:
+      # MCP server writes CRM logs to models/reports/retention_log.jsonl
+      # Mount so logs persist on your host after container stops
+      - ./models/reports:/app/models/reports
+    restart: unless-stopped
+    # Healthcheck is defined in docker/mcp.Dockerfile
+
+  # ── FastAPI + LangGraph ─────────────────────────────────────────────────────
+  api:
+    build:
+      context: .
+      dockerfile: docker/api.Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      MCP_TRANSPORT: sse
+      # This is how api reaches mcp-server inside Docker's network:
+      MCP_SERVER_URL: http://mcp-server:8001/sse
+      # Read from your .env file in the project root (auto-loaded by compose):
+      GROQ_API_KEY: ${GROQ_API_KEY}
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+    volumes:
+      # models/ and data/ are large and change when you retrain.
+      # Bind-mount them so the container always uses your latest files.
+      - ./models:/app/models
+      - ./data:/app/data
+    depends_on:
+      mcp-server:
+        condition: service_healthy   # wait for mcp-server to pass its healthcheck
+    restart: unless-stopped
+
+  # ── Next.js Frontend ────────────────────────────────────────────────────────
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/frontend.Dockerfile
+      args:
+        # NEXT_PUBLIC_API_BASE is embedded at build time.
+        # Must be reachable from the USER'S BROWSER — not from inside Docker.
+        # So localhost:8000, not http://api:8000.
+        NEXT_PUBLIC_API_BASE: http://localhost:8000
+    ports:
+      - "3000:3000"
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped

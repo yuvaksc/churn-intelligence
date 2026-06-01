@@ -1,0 +1,50 @@
+version: 0.2
+
+env:
+  variables:
+    AWS_DEFAULT_REGION: us-east-1
+    AWS_ACCOUNT_ID: "654654306411"
+    ECR_REPO_NAME: churn-inference
+    MCP_ECR_REPO_NAME: churn-mcp
+    S3_BUCKET: churn-prod-artifacts-yuva2004
+    S3_DATA_BUCKET: churn-prod-data-yuva2004
+
+phases:
+  pre_build:
+    commands:
+      - echo Logging in to Amazon ECR...
+      - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com
+      - COMMIT_HASH=$(echo $CODEBUILD_RESOLVED_SOURCE_VERSION | cut -c 1-7)
+      - IMAGE_URI=$AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$ECR_REPO_NAME
+      - MCP_IMAGE_URI=$AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$MCP_ECR_REPO_NAME
+      - echo Downloading model files from S3...
+      - mkdir -p models data/raw
+      - aws s3 cp s3://$S3_BUCKET/models/v1/xgb_pipeline.pkl        models/xgb_pipeline.pkl
+      - aws s3 cp s3://$S3_BUCKET/models/v1/xgboost_churn.pkl       models/xgboost_churn.pkl
+      - aws s3 cp s3://$S3_BUCKET/models/v1/encoders.pkl            models/encoders.pkl
+      - aws s3 cp s3://$S3_BUCKET/models/v1/feature_names_35.pkl    models/feature_names_35.pkl
+      - aws s3 cp s3://$S3_BUCKET/models/v1/feature_names_36.pkl    models/feature_names_36.pkl
+      - aws s3 cp s3://$S3_BUCKET/models/v1/threshold.pkl           models/threshold.pkl
+      - aws s3 cp s3://$S3_BUCKET/models/v1/shap_explainer.pkl      models/shap_explainer.pkl
+      - aws s3 cp s3://$S3_BUCKET/models/v1/shap_values_test.csv    models/shap_values_test.csv
+      - aws s3 cp s3://$S3_DATA_BUCKET/raw/telco.csv                data/raw/telco.csv
+      - echo Model files downloaded successfully
+
+  build:
+    commands:
+      - echo Building inference image...
+      - docker build --platform linux/amd64 --provenance=false -f docker/lambda.Dockerfile -t $ECR_REPO_NAME:$COMMIT_HASH .
+      - docker tag $ECR_REPO_NAME:$COMMIT_HASH $IMAGE_URI:$COMMIT_HASH
+      - echo Building MCP tools image...
+      - docker build --platform linux/amd64 --provenance=false -f docker/mcp_lambda.Dockerfile -t $MCP_ECR_REPO_NAME:$COMMIT_HASH .
+      - docker tag $MCP_ECR_REPO_NAME:$COMMIT_HASH $MCP_IMAGE_URI:$COMMIT_HASH
+
+  post_build:
+    commands:
+      - echo Pushing inference image...
+      - docker push $IMAGE_URI:$COMMIT_HASH
+      - echo Pushing MCP image...
+      - docker push $MCP_IMAGE_URI:$COMMIT_HASH
+      - echo Both images pushed successfully
+      - echo Inference image $IMAGE_URI:$COMMIT_HASH
+      - echo MCP image $MCP_IMAGE_URI:$COMMIT_HASH

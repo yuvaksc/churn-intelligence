@@ -1,0 +1,36 @@
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.env
+.git/
+.gitignore
+*.md
+
+# Frontend build artifacts (rebuilt inside the container)
+frontend/node_modules/
+frontend/.next/
+frontend/.env.local
+
+# Large runtime directories — bind-mounted at runtime, never COPYed
+# data folder excluded (not needed in Lambda image)
+# data folder — exclude everything except telco.csv
+data/*
+data/raw/*
+!data/raw/telco.csv
+
+# models folder — exclude everything except the pkl files needed for Lambda
+models/*
+!models/xgb_pipeline.pkl
+!models/xgboost_churn.pkl
+!models/encoders.pkl
+!models/feature_names_35.pkl
+!models/feature_names_36.pkl
+!models/threshold.pkl
+!models/shap_explainer.pkl
+!models/shap_values_test.csv
+
+# Test/dev files
+evaluate.py
+verify.py

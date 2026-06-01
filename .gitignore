@@ -1,0 +1,38 @@
+# Environment variables — NEVER commit these
+.env
+.env.*
+
+# Model files — too large for git, stored in S3
+models/
+
+# Data files
+data/chroma_db
+data/raw/
+data/processed/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+venv/
+.venv/
+
+# Node
+frontend/node_modules/
+frontend/.next/
+frontend/.env.local
+
+# Dev files
+verify.py
+evaluate.py
+
+# Docker
+.dockerignore
+
+# OS
+.DS_Store
+Thumbs.db
+
+data/
