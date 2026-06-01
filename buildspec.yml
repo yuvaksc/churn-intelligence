@@ -46,5 +46,9 @@ phases:
       - echo Pushing MCP image...
       - docker push $MCP_IMAGE_URI:$COMMIT_HASH
       - echo Both images pushed successfully
-      - echo Inference image $IMAGE_URI:$COMMIT_HASH
-      - echo MCP image $MCP_IMAGE_URI:$COMMIT_HASH
+      - printf '{"commit":"%s","inference":"%s","mcp":"%s"}' "$COMMIT_HASH" "$IMAGE_URI:$COMMIT_HASH" "$MCP_IMAGE_URI:$COMMIT_HASH" > image_tags.json
+      - cat image_tags.json
+
+artifacts:
+  files:
+    - image_tags.json
