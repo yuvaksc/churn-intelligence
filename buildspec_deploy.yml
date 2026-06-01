@@ -1,0 +1,48 @@
+version: 0.2
+
+env:
+  variables:
+    AWS_DEFAULT_REGION: us-east-1
+    AWS_ACCOUNT_ID: "654654306411"
+    ECR_REPO_NAME: churn-inference
+    MCP_ECR_REPO_NAME: churn-mcp
+
+phases:
+  pre_build:
+    commands:
+      - echo Getting current prod alias versions...
+      - INFERENCE_CURRENT=$(aws lambda get-alias --function-name churn-inference --name prod --query "FunctionVersion" --output text --region $AWS_DEFAULT_REGION)
+      - WARROOM_CURRENT=$(aws lambda get-alias --function-name churn-warroom --name prod --query "FunctionVersion" --output text --region $AWS_DEFAULT_REGION)
+      - MCP_CURRENT=$(aws lambda get-alias --function-name churn-mcp-tools --name prod --query "FunctionVersion" --output text --region $AWS_DEFAULT_REGION)
+      - echo Current versions - inference=$INFERENCE_CURRENT warroom=$WARROOM_CURRENT mcp=$MCP_CURRENT
+
+  build:
+    commands:
+      - echo Publishing new Lambda versions...
+      - INFERENCE_NEW=$(aws lambda publish-version --function-name churn-inference --region $AWS_DEFAULT_REGION --query "Version" --output text)
+      - WARROOM_NEW=$(aws lambda publish-version --function-name churn-warroom --region $AWS_DEFAULT_REGION --query "Version" --output text)
+      - MCP_NEW=$(aws lambda publish-version --function-name churn-mcp-tools --region $AWS_DEFAULT_REGION --query "Version" --output text)
+      - echo New versions - inference=$INFERENCE_NEW warroom=$WARROOM_NEW mcp=$MCP_NEW
+      - echo Writing AppSpec files...
+      - printf 'version:0.0\nResources:\n  - ChurnInference:\n      Type: AWS::Lambda::Function\n      Properties:\n        Name: churn-inference\n        Alias: prod\n        CurrentVersion: "%s"\n        TargetVersion: "%s"\n' "$INFERENCE_CURRENT" "$INFERENCE_NEW" > appspec-inference.yml
+      - printf 'version:0.0\nResources:\n  - ChurnWarroom:\n      Type: AWS::Lambda::Function\n      Properties:\n        Name: churn-warroom\n        Alias: prod\n        CurrentVersion: "%s"\n        TargetVersion: "%s"\n' "$WARROOM_CURRENT" "$WARROOM_NEW" > appspec-warroom.yml
+      - printf 'version:0.0\nResources:\n  - ChurnMcp:\n      Type: AWS::Lambda::Function\n      Properties:\n        Name: churn-mcp-tools\n        Alias: prod\n        CurrentVersion: "%s"\n        TargetVersion: "%s"\n' "$MCP_CURRENT" "$MCP_NEW" > appspec-mcp.yml
+      - echo Triggering CodeDeploy deployments...
+      - INFERENCE_DEPLOY=$(aws deploy create-deployment --application-name churn-deploy --deployment-group-name churn-inference-dg --revision revisionType=AppSpecContent,appSpecContent={content="$(cat appspec-inference.yml)"} --region $AWS_DEFAULT_REGION --query "deploymentId" --output text)
+      - WARROOM_DEPLOY=$(aws deploy create-deployment --application-name churn-deploy --deployment-group-name churn-warroom-dg --revision revisionType=AppSpecContent,appSpecContent={content="$(cat appspec-warroom.yml)"} --region $AWS_DEFAULT_REGION --query "deploymentId" --output text)
+      - MCP_DEPLOY=$(aws deploy create-deployment --application-name churn-deploy --deployment-group-name churn-mcp-dg --revision revisionType=AppSpecContent,appSpecContent={content="$(cat appspec-mcp.yml)"} --region $AWS_DEFAULT_REGION --query "deploymentId" --output text)
+      - echo Deployments triggered - $INFERENCE_DEPLOY $WARROOM_DEPLOY $MCP_DEPLOY
+
+  post_build:
+    commands:
+      - echo Waiting for deployments to complete...
+      - aws deploy wait deployment-successful --deployment-id $INFERENCE_DEPLOY --region $AWS_DEFAULT_REGION
+      - aws deploy wait deployment-successful --deployment-id $WARROOM_DEPLOY --region $AWS_DEFAULT_REGION
+      - aws deploy wait deployment-successful --deployment-id $MCP_DEPLOY --region $AWS_DEFAULT_REGION
+      - echo All three Lambdas deployed successfully via CodeDeploy
+
+artifacts:
+  files:
+    - appspec-inference.yml
+    - appspec-warroom.yml
+    - appspec-mcp.yml
