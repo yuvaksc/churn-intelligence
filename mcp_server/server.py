@@ -81,10 +81,12 @@ def log_retention_action(
     Logs a retention action to the CRM queue.
     Call this as the FINAL step after the offer has been drafted.
     """
+    import time
     log_id = (
         f"RET-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
         f"-{str(uuid.uuid4())[:6].upper()}"
     )
+    now_iso = datetime.now().isoformat()
     entry = {
         "log_id":         log_id,
         "customer_id":    customer_id,
@@ -92,20 +94,44 @@ def log_retention_action(
         "offer_text":     offer_text,
         "contract_type":  contract_type,
         "monthly_charge": round(monthly_charge, 2),
-        "timestamp":      datetime.now().isoformat(),
+        "timestamp":      now_iso,
         "status":         "PENDING_CONTACT",
         "assigned_to":    "Retention Team Queue",
     }
-    LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with open(LOG_PATH, "a") as f:
-        f.write(json.dumps(entry) + "\n")
+
+    # In Lambda, write to DynamoDB. Locally, fall back to the JSONL file.
+    if os.environ.get("AWS_LAMBDA_FUNCTION_NAME"):
+        import boto3
+        from decimal import Decimal
+        table_name = os.environ.get("DYNAMODB_TABLE", "churn-prod-main")
+        ddb = boto3.resource("dynamodb", region_name=os.environ.get("BEDROCK_REGION", "us-east-1"))
+        table = ddb.Table(table_name)
+        item = {
+            "PK":             f"LOG#{log_id}",
+            "SK":             f"CUSTOMER#{customer_id}",
+            "log_date":       now_iso[:10],
+            "log_id":         log_id,
+            "customer_id":    customer_id,
+            "risk_score":     Decimal(str(round(risk_score, 4))),
+            "offer_text":     offer_text,
+            "contract_type":  contract_type,
+            "monthly_charge": Decimal(str(round(monthly_charge, 2))),
+            "timestamp":      now_iso,
+            "status":         "PENDING_CONTACT",
+            "assigned_to":    "Retention Team Queue",
+            "ttl":            int(time.time()) + 60 * 60 * 24 * 30,
+        }
+        table.put_item(Item=item)
+    else:
+        LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with open(LOG_PATH, "a") as f:
+            f.write(json.dumps(entry) + "\n")
 
     return {
         "status":  "logged",
         "log_id":  log_id,
         "message": f"Retention action queued for customer {customer_id}",
     }
-
 
 # ── Resources ─────────────────────────────────────────────────────────────────
 
