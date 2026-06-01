@@ -32,7 +32,7 @@ phases:
       - INFERENCE_CURRENT=$(aws lambda get-alias --function-name churn-inference --name prod --query FunctionVersion --output text --region $AWS_DEFAULT_REGION)
       - WARROOM_CURRENT=$(aws lambda get-alias --function-name churn-warroom --name prod --query FunctionVersion --output text --region $AWS_DEFAULT_REGION)
       - MCP_CURRENT=$(aws lambda get-alias --function-name churn-mcp-tools --name prod --query FunctionVersion --output text --region $AWS_DEFAULT_REGION)
-      - echo Current prod versions inference=$INFERENCE_CURRENT warroom=$WARROOM_CURRENT mcp=$MCP_CURRENT
+      - echo "Current prod versions $INFERENCE_CURRENT $WARROOM_CURRENT $MCP_CURRENT"
 
   build:
     commands:
@@ -58,7 +58,7 @@ phases:
       - INFERENCE_NEW=$(aws lambda publish-version --function-name churn-inference --region $AWS_DEFAULT_REGION --query Version --output text)
       - WARROOM_NEW=$(aws lambda publish-version --function-name churn-warroom --region $AWS_DEFAULT_REGION --query Version --output text)
       - MCP_NEW=$(aws lambda publish-version --function-name churn-mcp-tools --region $AWS_DEFAULT_REGION --query Version --output text)
-      - echo New versions inference=$INFERENCE_NEW warroom=$WARROOM_NEW mcp=$MCP_NEW
+      - echo "New versions $INFERENCE_NEW $WARROOM_NEW $MCP_NEW"
       - echo version0.0 > appspec-inference.yml
       - echo Resources >> appspec-inference.yml
       - echo "  - ChurnInference:" >> appspec-inference.yml
