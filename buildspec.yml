@@ -1,3 +1,66 @@
+# version: 0.2
+
+# env:
+#   variables:
+#     AWS_DEFAULT_REGION: us-east-1
+#     AWS_ACCOUNT_ID: "654654306411"
+#     ECR_REPO_NAME: churn-inference
+#     MCP_ECR_REPO_NAME: churn-mcp
+#     S3_BUCKET: churn-prod-artifacts-yuva2004
+#     S3_DATA_BUCKET: churn-prod-data-yuva2004
+
+# phases:
+#   pre_build:
+#     commands:
+#       - echo Logging in to Amazon ECR...
+#       - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com
+#       - COMMIT_HASH=$(echo $CODEBUILD_RESOLVED_SOURCE_VERSION | cut -c 1-7)
+#       - IMAGE_URI=$AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$ECR_REPO_NAME
+#       - MCP_IMAGE_URI=$AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$MCP_ECR_REPO_NAME
+#       - echo Downloading model files from S3...
+#       - mkdir -p models data/raw
+#       - aws s3 cp s3://$S3_BUCKET/models/v1/xgb_pipeline.pkl        models/xgb_pipeline.pkl
+#       - aws s3 cp s3://$S3_BUCKET/models/v1/xgboost_churn.pkl       models/xgboost_churn.pkl
+#       - aws s3 cp s3://$S3_BUCKET/models/v1/encoders.pkl            models/encoders.pkl
+#       - aws s3 cp s3://$S3_BUCKET/models/v1/feature_names_35.pkl    models/feature_names_35.pkl
+#       - aws s3 cp s3://$S3_BUCKET/models/v1/feature_names_36.pkl    models/feature_names_36.pkl
+#       - aws s3 cp s3://$S3_BUCKET/models/v1/threshold.pkl           models/threshold.pkl
+#       - aws s3 cp s3://$S3_BUCKET/models/v1/shap_explainer.pkl      models/shap_explainer.pkl
+#       - aws s3 cp s3://$S3_BUCKET/models/v1/shap_values_test.csv    models/shap_values_test.csv
+#       - aws s3 cp s3://$S3_DATA_BUCKET/raw/telco.csv                data/raw/telco.csv
+#       - echo Model files downloaded successfully
+
+#   build:
+#     commands:
+#       - echo Building inference image...
+#       - docker build --platform linux/amd64 --provenance=false -f docker/lambda.Dockerfile -t $ECR_REPO_NAME:$COMMIT_HASH .
+#       - docker tag $ECR_REPO_NAME:$COMMIT_HASH $IMAGE_URI:$COMMIT_HASH
+#       - echo Building MCP tools image...
+#       - docker build --platform linux/amd64 --provenance=false -f docker/mcp_lambda.Dockerfile -t $MCP_ECR_REPO_NAME:$COMMIT_HASH .
+#       - docker tag $MCP_ECR_REPO_NAME:$COMMIT_HASH $MCP_IMAGE_URI:$COMMIT_HASH
+
+#   post_build:
+#     commands:
+#       - echo Pushing inference image...
+#       - docker push $IMAGE_URI:$COMMIT_HASH
+#       - echo Pushing MCP image...
+#       - docker push $MCP_IMAGE_URI:$COMMIT_HASH
+#       - echo Both images pushed successfully
+#       - printf '{"commit":"%s","inference":"%s","mcp":"%s"}' "$COMMIT_HASH" "$IMAGE_URI:$COMMIT_HASH" "$MCP_IMAGE_URI:$COMMIT_HASH" > image_tags.json
+#       - cat image_tags.json
+
+# artifacts:
+#   files:
+#     - image_tags.json
+
+
+
+
+
+
+
+
+
 version: 0.2
 
 env:
@@ -29,6 +92,11 @@ phases:
       - aws s3 cp s3://$S3_BUCKET/models/v1/shap_values_test.csv    models/shap_values_test.csv
       - aws s3 cp s3://$S3_DATA_BUCKET/raw/telco.csv                data/raw/telco.csv
       - echo Model files downloaded successfully
+      - echo Getting current prod alias versions for AppSpec...
+      - INFERENCE_CURRENT=$(aws lambda get-alias --function-name churn-inference --name prod --query "FunctionVersion" --output text --region $AWS_DEFAULT_REGION)
+      - WARROOM_CURRENT=$(aws lambda get-alias --function-name churn-warroom --name prod --query "FunctionVersion" --output text --region $AWS_DEFAULT_REGION)
+      - MCP_CURRENT=$(aws lambda get-alias --function-name churn-mcp-tools --name prod --query "FunctionVersion" --output text --region $AWS_DEFAULT_REGION)
+      - echo Current prod versions - inference=$INFERENCE_CURRENT warroom=$WARROOM_CURRENT mcp=$MCP_CURRENT
 
   build:
     commands:
@@ -45,10 +113,29 @@ phases:
       - docker push $IMAGE_URI:$COMMIT_HASH
       - echo Pushing MCP image...
       - docker push $MCP_IMAGE_URI:$COMMIT_HASH
-      - echo Both images pushed successfully
-      - printf '{"commit":"%s","inference":"%s","mcp":"%s"}' "$COMMIT_HASH" "$IMAGE_URI:$COMMIT_HASH" "$MCP_IMAGE_URI:$COMMIT_HASH" > image_tags.json
-      - cat image_tags.json
+      - echo Updating Lambda functions to new image...
+      - aws lambda update-function-code --function-name churn-inference --image-uri $IMAGE_URI:$COMMIT_HASH --region $AWS_DEFAULT_REGION
+      - aws lambda update-function-code --function-name churn-warroom --image-uri $IMAGE_URI:$COMMIT_HASH --region $AWS_DEFAULT_REGION
+      - aws lambda update-function-code --function-name churn-mcp-tools --image-uri $MCP_IMAGE_URI:$COMMIT_HASH --region $AWS_DEFAULT_REGION
+      - echo Waiting for Lambda updates to complete...
+      - aws lambda wait function-updated --function-name churn-inference --region $AWS_DEFAULT_REGION
+      - aws lambda wait function-updated --function-name churn-warroom --region $AWS_DEFAULT_REGION
+      - aws lambda wait function-updated --function-name churn-mcp-tools --region $AWS_DEFAULT_REGION
+      - echo Publishing new Lambda versions...
+      - INFERENCE_NEW=$(aws lambda publish-version --function-name churn-inference --region $AWS_DEFAULT_REGION --query "Version" --output text)
+      - WARROOM_NEW=$(aws lambda publish-version --function-name churn-warroom --region $AWS_DEFAULT_REGION --query "Version" --output text)
+      - MCP_NEW=$(aws lambda publish-version --function-name churn-mcp-tools --region $AWS_DEFAULT_REGION --query "Version" --output text)
+      - echo New versions - inference=$INFERENCE_NEW warroom=$WARROOM_NEW mcp=$MCP_NEW
+      - echo Writing dynamic AppSpec files...
+      - printf 'version:0.0\nResources:\n  - ChurnInference:\n      Type: AWS::Lambda::Function\n      Properties:\n        Name: churn-inference\n        Alias: prod\n        CurrentVersion: "%s"\n        TargetVersion: "%s"\n' "$INFERENCE_CURRENT" "$INFERENCE_NEW" > appspec-inference.yml
+      - printf 'version:0.0\nResources:\n  - ChurnWarroom:\n      Type: AWS::Lambda::Function\n      Properties:\n        Name: churn-warroom\n        Alias: prod\n        CurrentVersion: "%s"\n        TargetVersion: "%s"\n' "$WARROOM_CURRENT" "$WARROOM_NEW" > appspec-warroom.yml
+      - printf 'version:0.0\nResources:\n  - ChurnMcp:\n      Type: AWS::Lambda::Function\n      Properties:\n        Name: churn-mcp-tools\n        Alias: prod\n        CurrentVersion: "%s"\n        TargetVersion: "%s"\n' "$MCP_CURRENT" "$MCP_NEW" > appspec-mcp.yml
+      - echo Build complete - commit $COMMIT_HASH
+      - echo Inference $IMAGE_URI:$COMMIT_HASH
+      - echo MCP $MCP_IMAGE_URI:$COMMIT_HASH
 
 artifacts:
   files:
-    - image_tags.json
+    - appspec-inference.yml
+    - appspec-warroom.yml
+    - appspec-mcp.yml
