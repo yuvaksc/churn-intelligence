@@ -1,12 +1,15 @@
 # docker/lambda.Dockerfile
-# Lambda-specific image — models baked in, no bind mounts, no uvicorn
+# Lambda-specific image — registry-managed models are downloaded at cold start
+# via SageMaker Model Registry. Only files NOT in the registry are baked in:
+#   - shap_explainer.pkl    (not registered — static per model version)
+#   - shap_values_test.csv  (not registered — pre-computed, static)
+#   - threshold.pkl         (local dev fallback only — Lambda reads from registry)
+#   - telco.csv             (raw dataset for deterministic test split)
 FROM public.ecr.aws/lambda/python:3.12
 
 # System dependencies
 RUN dnf install -y gcc g++ libgomp && dnf clean all
 
-
-# Python dependencies
 # Python dependencies
 COPY requirements.txt requirements_agents.txt requirements_api.txt ./
 RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
@@ -22,20 +25,16 @@ COPY api/        ${LAMBDA_TASK_ROOT}/api/
 COPY agents/     ${LAMBDA_TASK_ROOT}/agents/
 COPY rag/        ${LAMBDA_TASK_ROOT}/rag/
 COPY mcp_server/ ${LAMBDA_TASK_ROOT}/mcp_server/
+COPY warroom_handler.py ${LAMBDA_TASK_ROOT}/warroom_handler.py
 
-# Bake models directly into the image (fast cold start — no S3 download needed)
-COPY models/xgb_pipeline.pkl        ${LAMBDA_TASK_ROOT}/models/xgb_pipeline.pkl
-COPY models/xgboost_churn.pkl       ${LAMBDA_TASK_ROOT}/models/xgboost_churn.pkl
-COPY models/encoders.pkl            ${LAMBDA_TASK_ROOT}/models/encoders.pkl
-COPY models/feature_names_35.pkl    ${LAMBDA_TASK_ROOT}/models/feature_names_35.pkl
-COPY models/feature_names_36.pkl    ${LAMBDA_TASK_ROOT}/models/feature_names_36.pkl
-COPY models/threshold.pkl           ${LAMBDA_TASK_ROOT}/models/threshold.pkl
+# Files NOT managed by the registry — baked into image
+# xgb_pipeline.pkl, xgboost_churn.pkl, encoders.pkl, feature_names_*.pkl
+# are downloaded from S3 at cold start via the registry metadata.
 COPY models/shap_explainer.pkl      ${LAMBDA_TASK_ROOT}/models/shap_explainer.pkl
-COPY data/raw/telco.csv    ${LAMBDA_TASK_ROOT}/data/raw/telco.csv
 COPY models/shap_values_test.csv    ${LAMBDA_TASK_ROOT}/models/shap_values_test.csv
-COPY warroom_handler.py  ${LAMBDA_TASK_ROOT}/warroom_handler.py
+COPY models/threshold.pkl           ${LAMBDA_TASK_ROOT}/models/threshold.pkl
+COPY data/raw/telco.csv             ${LAMBDA_TASK_ROOT}/data/raw/telco.csv
 
 ENV PYTHONPATH=${LAMBDA_TASK_ROOT}
 
-# Lambda handler entrypoint
 CMD ["api.main.lambda_handler"]

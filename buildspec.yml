@@ -18,14 +18,10 @@ phases:
       - IMAGE_URI=$AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$ECR_REPO_NAME
       - MCP_IMAGE_URI=$AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$MCP_ECR_REPO_NAME
       - mkdir -p models data/raw
-      - aws s3 cp s3://$S3_BUCKET/models/v1/xgb_pipeline.pkl models/xgb_pipeline.pkl
-      - aws s3 cp s3://$S3_BUCKET/models/v1/xgboost_churn.pkl models/xgboost_churn.pkl
-      - aws s3 cp s3://$S3_BUCKET/models/v1/encoders.pkl models/encoders.pkl
-      - aws s3 cp s3://$S3_BUCKET/models/v1/feature_names_35.pkl models/feature_names_35.pkl
-      - aws s3 cp s3://$S3_BUCKET/models/v1/feature_names_36.pkl models/feature_names_36.pkl
-      - aws s3 cp s3://$S3_BUCKET/models/v1/threshold.pkl models/threshold.pkl
+      - echo Downloading files not managed by Model Registry...
       - aws s3 cp s3://$S3_BUCKET/models/v1/shap_explainer.pkl models/shap_explainer.pkl
       - aws s3 cp s3://$S3_BUCKET/models/v1/shap_values_test.csv models/shap_values_test.csv
+      - aws s3 cp s3://$S3_BUCKET/models/v1/threshold.pkl models/threshold.pkl
       - aws s3 cp s3://$S3_DATA_BUCKET/raw/telco.csv data/raw/telco.csv
       - INFERENCE_CURRENT=$(aws lambda get-alias --function-name churn-inference --name prod --query FunctionVersion --output text --region $AWS_DEFAULT_REGION)
       - WARROOM_CURRENT=$(aws lambda get-alias --function-name churn-warroom --name prod --query FunctionVersion --output text --region $AWS_DEFAULT_REGION)
