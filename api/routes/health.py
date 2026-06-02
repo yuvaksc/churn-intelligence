@@ -1,14 +1,15 @@
 """
 api/routes/health.py
 
-GET /health — system status and model provenance.
+GET /health — system status, model info, and model provenance.
 
-The model_registry block now shows which SageMaker Model Registry version is
-actually running in this Lambda container — version number, ARN, approval
-status, and the performance metrics stored at registration time.
+Top-level fields (test_set_size, high_risk_count, threshold, chroma_collections)
+are kept flat because the frontend dashboard reads them directly. The new
+model_registry block is added alongside them — it shows which SageMaker Model
+Registry version this Lambda container loaded at cold start.
 
-On Lambda:  populated from registry metadata fetched at cold start.
-Locally:    shows source=local, version_number=dev.
+On Lambda:  model_registry populated from registry metadata fetched at cold start.
+Locally:    model_registry shows source=local, version_number=dev.
 """
 
 from fastapi import APIRouter, Depends
@@ -23,17 +24,12 @@ def health(state: AppState = Depends(get_state)):
 
     return {
         "status": "ok",
-        "model": {
-            "pipeline":  "xgb_pipeline.pkl  (SMOTEENN + XGBClassifier, 35 features)",
-            "threshold": state.threshold,
-            "test_set_size": len(state.eng_test_raw),
-            "high_risk_customers": high_risk,
-        },
+        "test_set_size": len(state.eng_test_raw),
+        "high_risk_count": high_risk,
+        "threshold": state.threshold,
+        "chroma_collections": ["profiles", "reasons"],
         "model_registry": {
             **state.model_version,
             "group": "churn-xgboost",
-        },
-        "rag": {
-            "chroma_collections": ["profiles", "reasons"],
         },
     }
