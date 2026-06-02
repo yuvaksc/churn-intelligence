@@ -1,15 +1,29 @@
 """
-warroom_handler.py — Lambda streaming handler for the war room.
-Exposed via Lambda Function URL with RESPONSE_STREAM enabled.
-Runs LangGraph war room graph and streams SSE events per agent.
+warroom_handler.py — Lambda handler for the war room.
+Exposed via Lambda Function URL.
+Runs LangGraph war room graph and returns buffered SSE events.
+
+Cold start behaviour:
+  Lambda's init phase is capped at 10s. Importing the full ML stack
+  (torch, xgboost, sentence-transformers) plus the SageMaker registry
+  query and 5 S3 downloads can exceed that window on a brand-new container.
+
+  Fix: _ensure_initialized() is called inside handler() — correctly deferred
+  to the request phase. BUT the import chain triggered at module level by
+  `from agents.graph import war_room_graph` is heavy enough to push the init
+  phase close to its limit before handler() is even called.
+
+  Solution: all heavy imports (agents.graph, api.dependencies) are moved
+  inside handler() so they don't execute during the init phase. Only stdlib
+  and lightweight modules import at module level.
 """
 
 import json
 import asyncio
 import os
 
-# Initialize app state (same lazy init as inference Lambda)
 _initialized = False
+
 
 def _ensure_initialized():
     global _initialized
@@ -24,54 +38,59 @@ def _ensure_initialized():
 def handler(event, context):
     """
     Lambda Function URL handler.
-    Returns SSE stream with one event per agent completion.
+    Returns buffered SSE response with one event per agent completion.
     """
+    # All heavy imports deferred here — keeps module-level init phase light
+    # so Lambda's 10s init window is not consumed before handler() runs.
+    from api.dependencies import get_state, get_customer_raw
+    from agents.graph import war_room_graph
+    from agents.state import WarRoomState
+
     _ensure_initialized()
 
-    # Extract customer_id from query params or path
+    # ------------------------------------------------------------------ #
+    # Parse customer_id from query params or path                          #
+    # ------------------------------------------------------------------ #
     params = event.get("queryStringParameters") or {}
     customer_id = params.get("customer_id")
 
     if not customer_id:
-        # Try path parameters
-        path = event.get("rawPath", "")
+        path  = event.get("rawPath", "")
         parts = path.strip("/").split("/")
-        # e.g. /analyze/42 → customer_id = "42"
         if len(parts) >= 2:
             customer_id = parts[-1]
 
     if not customer_id:
         return {
             "statusCode": 400,
-            "body": json.dumps({"error": "customer_id required"})
+            "body": json.dumps({"error": "customer_id required"}),
         }
-
-    # Load customer data from app state
-    from api.dependencies import get_state, get_customer_raw
-    state = get_state()
 
     try:
         customer_id_int = int(customer_id)
     except ValueError:
         return {
             "statusCode": 400,
-            "body": json.dumps({"error": "customer_id must be an integer"})
+            "body": json.dumps({"error": "customer_id must be an integer"}),
         }
 
+    # ------------------------------------------------------------------ #
+    # Load customer from state                                             #
+    # ------------------------------------------------------------------ #
+    state        = get_state()
     customer_raw = get_customer_raw(customer_id_int, state)
+
     if not customer_raw:
         return {
             "statusCode": 404,
-            "body": json.dumps({"error": f"Customer {customer_id} not found"})
+            "body": json.dumps({"error": f"Customer {customer_id} not found"}),
         }
 
-    # Get customer state for MCP competitor lookup
     customer_state_val = customer_raw.get("State", "DEFAULT")
 
-    # Run the war room graph
-    from agents.graph import war_room_graph
-    from agents.state import WarRoomState
-
+    # ------------------------------------------------------------------ #
+    # Run the war room graph                                               #
+    # ------------------------------------------------------------------ #
     initial_state = WarRoomState(
         customer_id=str(customer_id),
         customer_raw=customer_raw,
@@ -91,7 +110,6 @@ def handler(event, context):
         messages=[],
     )
 
-    # Collect SSE chunks
     sse_chunks = []
 
     async def run_graph():
@@ -101,7 +119,6 @@ def handler(event, context):
             node_name = list(chunk.keys())[0]
             node_data = chunk[node_name]
 
-            # Serialize non-serializable fields
             safe_data = {}
             for k, v in node_data.items():
                 try:
@@ -110,18 +127,19 @@ def handler(event, context):
                 except (TypeError, ValueError):
                     safe_data[k] = str(v)
 
-            sse_event = f"data: {json.dumps({'event': f'{node_name}_complete', 'data': safe_data})}\n\n"
-            sse_chunks.append(sse_event)
+            sse_chunks.append(
+                f"data: {json.dumps({'event': f'{node_name}_complete', 'data': safe_data})}\n\n"
+            )
 
-        sse_chunks.append("data: {\"event\": \"done\"}\n\n")
+        sse_chunks.append('data: {"event": "done"}\n\n')
 
     asyncio.get_event_loop().run_until_complete(run_graph())
 
     return {
         "statusCode": 200,
         "headers": {
-            "Content-Type": "text/event-stream",
-            "Cache-Control": "no-cache",
+            "Content-Type":    "text/event-stream",
+            "Cache-Control":   "no-cache",
             "X-Accel-Buffering": "no",
         },
         "body": "".join(sse_chunks),
