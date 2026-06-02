@@ -28,6 +28,6 @@ EXPOSE 8001
 # curl returns 200 as soon as the server sends the response header,
 # even though the body streams indefinitely — so --max-time 3 is enough.
 HEALTHCHECK --interval=15s --timeout=5s --start-period=10s --retries=3 \
-    CMD curl -sf --max-time 3 http://localhost:8001/sse || exit 1
+    CMD sh -c 'curl -so /dev/null --max-time 3 http://localhost:8001/sse; e=$?; [ $e -eq 0 ] || [ $e -eq 28 ]'
 
 CMD ["python", "-m", "mcp_server.server"]

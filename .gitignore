@@ -1,3 +1,4 @@
 data/chroma_db
 models/
 verify.py
+.claude

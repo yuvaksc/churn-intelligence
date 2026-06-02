@@ -26,6 +26,7 @@ If risk is LOW, only agent1_complete + done are emitted.
 
 import json
 import asyncio
+from pathlib import Path
 from typing import AsyncGenerator
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -34,6 +35,14 @@ from fastapi.responses import StreamingResponse
 from api.schemas import WarRoomResult, ShapDriver
 from api.dependencies import AppState, get_state, get_customer_raw
 from agents.graph import war_room_graph
+
+_RETENTION_LOG = Path("models/reports/retention_log.jsonl")
+
+
+def _clear_retention_log() -> None:
+    """Wipe previous retention log so each analysis starts fresh."""
+    if _RETENTION_LOG.exists():
+        _RETENTION_LOG.write_text("", encoding="utf-8")
 
 router = APIRouter(tags=["analysis"])
 
@@ -75,6 +84,8 @@ async def analyze_customer(
     customer_raw = get_customer_raw(customer_id, state)
     if customer_raw is None:
         raise HTTPException(status_code=404, detail=f"Customer {customer_id} not in test set")
+
+    _clear_retention_log()
 
     initial = _build_initial_state(customer_id, customer_raw, customer_state)
 
@@ -175,6 +186,8 @@ async def stream_analysis(
     customer_raw = get_customer_raw(customer_id, state)
     if customer_raw is None:
         raise HTTPException(status_code=404, detail=f"Customer {customer_id} not in test set")
+
+    _clear_retention_log()
 
     return StreamingResponse(
         _stream_war_room(customer_id, customer_raw, customer_state),
