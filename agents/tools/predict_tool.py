@@ -11,8 +11,16 @@ Why two paths: xgb_pipeline was trained on 35 features (Charge Index excluded
 from that pipeline's preprocessing), but shap_explainer was built on the
 standalone xgboost_churn.pkl which uses 36 features. We verified this in the
 artifact inspection step (xgb_pipeline expects 35, shap_values_test has 36 cols).
+
+Artifact resolution:
+  On Lambda the 5 registry-managed pkls (pipeline, xgboost, encoders, feat_35,
+  feat_36) are downloaded from S3 to /tmp/churn_models/ at cold start by
+  api/dependencies.py — they are NOT baked into the image. shap_explainer.pkl
+  and threshold.pkl ARE baked in and load from the local models/ directory.
+  _resolve() prefers the /tmp copy and falls back to models/ for local dev.
 """
 
+import os
 import sys
 import joblib
 import numpy as np
@@ -25,6 +33,27 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 from data.loader import BINARY_COLS, NOMINAL_COLS, CONTRACT_ORDINAL
 
 MODELS_DIR = Path("models")
+TMP_DIR = Path("/tmp/churn_models")
+
+# Maps original filename → logical name used by the /tmp registry download.
+_TMP_NAME = {
+    "xgb_pipeline.pkl":     "pipeline.pkl",
+    "xgboost_churn.pkl":    "xgboost.pkl",
+    "encoders.pkl":         "encoders.pkl",
+    "feature_names_35.pkl": "feat_35.pkl",
+    "feature_names_36.pkl": "feat_36.pkl",
+}
+
+
+def _resolve(filename: str) -> Path:
+    """
+    Resolve an artifact path. Prefer the registry-downloaded copy in /tmp
+    (Lambda), fall back to the local models/ directory (dev + baked files).
+    """
+    tmp_candidate = TMP_DIR / _TMP_NAME.get(filename, filename)
+    if tmp_candidate.exists():
+        return tmp_candidate
+    return MODELS_DIR / filename
 
 
 # ── Artifact loading (cached — loaded once per process) ───────────────────────
@@ -32,13 +61,13 @@ MODELS_DIR = Path("models")
 @lru_cache(maxsize=1)
 def _artifacts() -> dict:
     return {
-        "pipeline":   joblib.load(MODELS_DIR / "xgb_pipeline.pkl"),
-        "xgb_model":  joblib.load(MODELS_DIR / "xgboost_churn.pkl"),
-        "shap_exp":   joblib.load(MODELS_DIR / "shap_explainer.pkl"),
-        "encoders":   joblib.load(MODELS_DIR / "encoders.pkl"),
-        "feat_35":    joblib.load(MODELS_DIR / "feature_names_35.pkl"),
-        "feat_36":    joblib.load(MODELS_DIR / "feature_names_36.pkl"),
-        "threshold":  joblib.load(MODELS_DIR / "threshold.pkl"),
+        "pipeline":   joblib.load(_resolve("xgb_pipeline.pkl")),
+        "xgb_model":  joblib.load(_resolve("xgboost_churn.pkl")),
+        "shap_exp":   joblib.load(_resolve("shap_explainer.pkl")),
+        "encoders":   joblib.load(_resolve("encoders.pkl")),
+        "feat_35":    joblib.load(_resolve("feature_names_35.pkl")),
+        "feat_36":    joblib.load(_resolve("feature_names_36.pkl")),
+        "threshold":  joblib.load(_resolve("threshold.pkl")),
     }
 
 
@@ -98,10 +127,10 @@ def predict_customer(customer_raw: dict) -> dict:
 
     Returns:
         {
-            risk_score:   float (0.0–1.0),
+            risk_score:   float (0.0-1.0),
             risk_label:   "HIGH" | "LOW",
             threshold:    float,
-            shap_drivers: list[dict] — top 5 SHAP contributors
+            shap_drivers: list[dict] - top 5 SHAP contributors
         }
     """
     art = _artifacts()
