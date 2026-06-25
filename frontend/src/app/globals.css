@@ -1,0 +1,112 @@
+@import "tailwindcss";
+
+/*
+  Churn War Room — command-center aesthetic.
+  Dark slate base, signal colors for risk states, monospace for all data.
+*/
+
+:root {
+  /* surfaces */
+  --bg:        #0a0e14;
+  --surface:   #121821;
+  --surface-2: #1a212d;
+  --surface-3: #232c3a;
+  --border:    #2a3340;
+  --border-bright: #3a4656;
+
+  /* text */
+  --text:      #e6ecf3;
+  --text-dim:  #8593a4;
+  --text-faint: #5a6675;
+
+  /* signal colors */
+  --risk:      #ff5247;   /* HIGH churn risk */
+  --risk-dim:  #4a1f1d;
+  --safe:      #2dd4a7;   /* LOW risk / retained */
+  --safe-dim:  #133d33;
+  --warn:      #f0a23b;   /* threshold / caution */
+  --info:      #4b9fff;   /* neutral data */
+  --accent:    #ff5247;
+
+  --glow-risk: 0 0 24px rgba(255, 82, 71, 0.25);
+  --glow-safe: 0 0 24px rgba(45, 212, 167, 0.2);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-body), system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* subtle grid texture on the page background */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background-image:
+    linear-gradient(var(--border) 1px, transparent 1px),
+    linear-gradient(90deg, var(--border) 1px, transparent 1px);
+  background-size: 48px 48px;
+  opacity: 0.12;
+  pointer-events: none;
+}
+
+.font-display { font-family: var(--font-display), sans-serif; }
+.font-mono    { font-family: var(--font-mono), monospace; }
+
+/* numeric / tabular alignment */
+.tnum { font-variant-numeric: tabular-nums; }
+
+/* scrollbar */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: var(--bg); }
+::-webkit-scrollbar-thumb {
+  background: var(--border-bright);
+  border-radius: 5px;
+  border: 2px solid var(--bg);
+}
+
+/* shared card */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+/* staggered entrance for streamed agent cards */
+@keyframes riseIn {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.rise-in { animation: riseIn 0.45s cubic-bezier(0.16, 1, 0.3, 1) both; }
+
+/* pulsing dot for "in progress" states */
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.3; }
+}
+.pulse { animation: pulse 1.4s ease-in-out infinite; }
+
+/* scanning shimmer for loading agent cards */
+@keyframes shimmer {
+  0%   { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+.shimmer {
+  background: linear-gradient(
+    90deg,
+    var(--surface-2) 25%,
+    var(--surface-3) 50%,
+    var(--surface-2) 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.6s infinite;
+}
