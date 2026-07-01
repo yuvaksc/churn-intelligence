@@ -90,6 +90,26 @@ async def _call(session: ClientSession, tool_name: str, arguments: dict[str, Any
     return _extract_text(result)
 
 
+async def list_tool_specs(session: ClientSession) -> list[dict]:
+    """
+    Discover the server's tools (MCP Capability Exchange) and return them as
+    OpenAI-format function specs for llm.bind_tools(). The LLM then decides which
+    to call at runtime.
+    """
+    result = await session.list_tools()
+    specs: list[dict] = []
+    for t in result.tools:
+        specs.append({
+            "type": "function",
+            "function": {
+                "name":        t.name,
+                "description": t.description or "",
+                "parameters":  t.inputSchema or {"type": "object", "properties": {}},
+            },
+        })
+    return specs
+
+
 async def _run_mcp_tool(tool_name: str, arguments: dict[str, Any]) -> str:
     """
     Open a fresh session, make one call, close.

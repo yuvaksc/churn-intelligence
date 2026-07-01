@@ -52,6 +52,7 @@ export interface WarRoomResult {
   competitor_intel: Record<string, unknown>;
   crm_log_id: string;
   crm_logged: boolean;
+  tools_used?: string[];
 }
 
 // SSE event payloads
@@ -74,6 +75,7 @@ export interface Agent3Event {
   competitor_intel: Record<string, unknown>;
   crm_log_id: string;
   crm_logged: boolean;
+  tools_used?: string[];
 }
 
 export interface DoneEvent {
@@ -119,3 +121,14 @@ export interface HealthResponse {
   high_risk_count: number;
   chroma_collections: string[];
 }
+
+// WebSocket token-streaming frames (Step 6)
+export type WSAgent = "agent1" | "agent2" | "agent3";
+
+export interface WSAgentStart { type: "agent_start"; agent: WSAgent; }
+export interface WSToken { type: "token"; agent: WSAgent; text: string; }
+export interface WSAgentComplete { type: "agent_complete"; agent: WSAgent; data: Record<string, unknown>; }
+export interface WSDone { type: "done"; risk_label: string; trace_id: string; }
+export interface WSError { type: "error"; message: string; }
+
+export type WSMessage = WSAgentStart | WSToken | WSAgentComplete | WSDone | WSError;

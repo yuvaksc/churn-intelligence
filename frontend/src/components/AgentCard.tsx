@@ -11,6 +11,7 @@ export function AgentCard({
   subtitle,
   accent,
   status,
+  streamingText,
   children,
 }: {
   index: number;
@@ -18,6 +19,7 @@ export function AgentCard({
   subtitle: string;
   accent: string;
   status: AgentStatus;
+  streamingText?: string;
   children?: React.ReactNode;
 }) {
   const dim = status === "idle" || status === "skipped";
@@ -64,13 +66,24 @@ export function AgentCard({
           {children}
         </div>
       )}
-      {status === "active" && (
-        <div className="px-5 pb-5 space-y-2">
-          <div className="h-3 rounded shimmer w-3/4" />
-          <div className="h-3 rounded shimmer w-full" />
-          <div className="h-3 rounded shimmer w-2/3" />
-        </div>
-      )}
+      {status === "active" &&
+        (streamingText ? (
+          <div className="px-5 pb-5">
+            <p
+              className="text-sm leading-relaxed whitespace-pre-wrap"
+              style={{ color: "var(--text-dim)" }}
+            >
+              {streamingText}
+              <span className="animate-pulse" style={{ color: accent }}>▋</span>
+            </p>
+          </div>
+        ) : (
+          <div className="px-5 pb-5 space-y-2">
+            <div className="h-3 rounded shimmer w-3/4" />
+            <div className="h-3 rounded shimmer w-full" />
+            <div className="h-3 rounded shimmer w-2/3" />
+          </div>
+        ))}
       {status === "skipped" && (
         <div className="px-5 pb-4 font-mono text-[12px]" style={{ color: "var(--text-faint)" }}>
           Skipped — customer below intervention threshold

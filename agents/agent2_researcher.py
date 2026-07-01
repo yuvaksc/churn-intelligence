@@ -37,7 +37,11 @@ Write a 3-sentence Evidence Report for the retention specialist:
               Yes/No + one specific reason why or why not.
 
 Rules:
-  - Use only evidence provided — do not invent statistics
+  - Use ONLY the evidence provided — do not invent statistics or customers
+  - Cite specifics: refer to the similar customers by their list number (e.g. "customer #1")
+    and quote churn reasons verbatim
+  - If the retrieved evidence is weak or does not match this customer, say so explicitly —
+    write "Insufficient historical evidence to establish a pattern" rather than guessing
   - No bullet points — flowing sentences only
   - Do NOT recommend any offer
 """
@@ -74,6 +78,16 @@ def _format_reasons(reasons: list) -> str:
     return "\n".join(f"  • {reason}  (×{count})" for reason, count in top3)
 
 
+def _litm_order(items: list) -> list:
+    """Lost-in-the-middle packing: place the strongest items at the start AND end
+    of the list and the weakest in the middle (LLMs attend least to the middle of
+    a long context). Input must be ranked best-first."""
+    head, tail = [], []
+    for i, item in enumerate(items):
+        (head if i % 2 == 0 else tail).append(item)
+    return head + tail[::-1]
+
+
 async def agent2_node(state: WarRoomState) -> dict:
     print("\n" + "─" * 52)
     print("  [Agent 2 — Evidence Researcher]")
@@ -82,9 +96,10 @@ async def agent2_node(state: WarRoomState) -> dict:
     snapshot   = _customer_snapshot(state["customer_raw"])
     query_text = f"{state['risk_summary']} | {snapshot}"
 
-    # Both ChromaDB calls are blocking I/O → run concurrently in thread pool
-    similar_profiles = query_similar_profiles(query_text, 5, True)
-    churn_reasons    = query_churn_reasons(query_text, 10)
+    # Hybrid retrieval (dense + BM25 + RRF + cross-encoder rerank) is blocking
+    # CPU work → offload to a thread so the event loop stays free.
+    similar_profiles = await asyncio.to_thread(query_similar_profiles, query_text, 5, True)
+    churn_reasons    = await asyncio.to_thread(query_churn_reasons, query_text, 10)
 
     print(f"  Similar churner profiles retrieved:  {len(similar_profiles)}")
     print(f"  Churn reasons retrieved:             {len(churn_reasons)}")
@@ -96,7 +111,7 @@ async def agent2_node(state: WarRoomState) -> dict:
     prompt = _EVIDENCE_PROMPT.format(
         risk_summary=state["risk_summary"],
         customer_snapshot=snapshot,
-        similar_profiles=_format_profiles(similar_profiles),
+        similar_profiles=_format_profiles(_litm_order(similar_profiles)),
         churn_reasons=_format_reasons(churn_reasons),
     )
     response        = await get_analytical_llm().ainvoke(prompt)

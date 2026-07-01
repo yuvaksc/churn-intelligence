@@ -1,28 +1,53 @@
 """
-rag/retriever.py — Query interface for both ChromaDB collections.
+rag/retriever.py — Hybrid retrieval over both ChromaDB collections.
 
-Lazy-loads the client + collections on first call.
-Call build_index.py once before using this module.
+Pipeline (per query):
+    dense (Chroma vector search) + sparse (in-memory BM25)
+        → reciprocal-rank fusion
+        → true-cosine scoring of the candidate pool
+        → cross-encoder rerank
+        → top-N
 
-Public API:
+Public API (signatures + return shapes unchanged; adds rerank_score / bm25_score /
+fusion_score keys, which downstream consumers ignore):
     query_similar_profiles(query_text, n_results, churners_only) -> list[dict]
-    query_churn_reasons(query_text, n_results)                   -> list[dict]
+    query_churn_reasons(query_text, n_results, min_similarity)    -> list[dict]
+
+Lazy-loads the Chroma client/collections, a per-collection BM25 index (built once
+from the stored documents), and the cross-encoder (see rag/rerank.py).
 """
 
 from pathlib import Path
 
-CHROMA_DIR = Path("data/chroma_db")
-
-
+import numpy as np
 import chromadb
 from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
 
-_client_instance    = None
-_profiles_instance  = None
-_reasons_instance   = None
+from rag.bm25 import BM25Index
+from rag.fusion import reciprocal_rank_fusion
+from rag.rerank import rerank
+
+CHROMA_DIR = Path("data/chroma_db")
+
+DENSE_K     = 30    # dense candidates pulled from Chroma
+SPARSE_K    = 30    # sparse candidates pulled from BM25
+RRF_K       = 60    # reciprocal-rank-fusion constant
+RERANK_POOL = 40    # max fused candidates sent to the cross-encoder
+
+_client_instance   = None
+_profiles_instance = None
+_reasons_instance  = None
+_ef_instance       = None
+_profiles_corpus   = None
+_reasons_corpus    = None
+
 
 def _ef():
-    return SentenceTransformerEmbeddingFunction(model_name="all-MiniLM-L6-v2")
+    global _ef_instance
+    if _ef_instance is None:
+        _ef_instance = SentenceTransformerEmbeddingFunction(model_name="all-MiniLM-L6-v2")
+    return _ef_instance
+
 
 def _get_client():
     global _client_instance
@@ -32,21 +57,95 @@ def _get_client():
         _client_instance = chromadb.PersistentClient(path=str(CHROMA_DIR))
     return _client_instance
 
+
 def _get_profiles():
     global _profiles_instance
     if _profiles_instance is None:
-        _profiles_instance = _get_client().get_collection(
-            "churn_profiles", embedding_function=_ef()
-        )
+        _profiles_instance = _get_client().get_collection("churn_profiles", embedding_function=_ef())
     return _profiles_instance
+
 
 def _get_reasons():
     global _reasons_instance
     if _reasons_instance is None:
-        _reasons_instance = _get_client().get_collection(
-            "churn_reasons", embedding_function=_ef()
-        )
+        _reasons_instance = _get_client().get_collection("churn_reasons", embedding_function=_ef())
     return _reasons_instance
+
+
+def _load_corpus(collection) -> dict:
+    """Pull all docs + metadata once and build a BM25 index over them (cached)."""
+    data = collection.get(include=["documents", "metadatas"])
+    ids, docs, metas = data["ids"], data["documents"], data["metadatas"]
+    return {
+        "docs":  dict(zip(ids, docs)),
+        "metas": dict(zip(ids, metas)),
+        "bm25":  BM25Index(docs, ids),
+    }
+
+
+def _get_profiles_corpus():
+    global _profiles_corpus
+    if _profiles_corpus is None:
+        _profiles_corpus = _load_corpus(_get_profiles())
+    return _profiles_corpus
+
+
+def _get_reasons_corpus():
+    global _reasons_corpus
+    if _reasons_corpus is None:
+        _reasons_corpus = _load_corpus(_get_reasons())
+    return _reasons_corpus
+
+
+def _cosine(a: np.ndarray, b: np.ndarray) -> float:
+    denom = float(np.linalg.norm(a) * np.linalg.norm(b))
+    return float(np.dot(a, b) / denom) if denom else 0.0
+
+
+def _hybrid(collection, corpus, query_text, text_key, n_results, where, allowed_ids):
+    # 1. Dense ranking via Chroma vector search
+    dres = collection.query(
+        query_texts=[query_text],
+        n_results=DENSE_K,
+        where=where,
+        include=["distances"],
+    )
+    dense_rank = list(dres["ids"][0])
+
+    # 2. Sparse ranking via BM25 (same filter applied via allowed_ids)
+    sparse_hits  = corpus["bm25"].search(query_text, SPARSE_K, allowed_ids=allowed_ids)
+    sparse_rank  = [doc_id for doc_id, _ in sparse_hits]
+    sparse_score = dict(sparse_hits)
+
+    # 3. Reciprocal-rank fusion → bounded candidate pool
+    fused = reciprocal_rank_fusion([dense_rank, sparse_rank], k=RRF_K)
+    pool  = [doc_id for doc_id, _ in fused[:RERANK_POOL]]
+    if not pool:
+        return []
+
+    # 4. True cosine for every candidate (consistent across dense- and sparse-sourced)
+    emb_data = collection.get(ids=pool, include=["embeddings"])
+    q_emb    = np.asarray(_ef()([query_text])[0], dtype=np.float32)
+    cos = {
+        doc_id: round(_cosine(q_emb, np.asarray(emb, dtype=np.float32)), 4)
+        for doc_id, emb in zip(emb_data["ids"], emb_data["embeddings"])
+    }
+    fusion_score = dict(fused)
+
+    candidates = [
+        {
+            text_key:       corpus["docs"][doc_id],
+            "metadata":     corpus["metas"][doc_id],
+            "similarity":   cos.get(doc_id, 0.0),
+            "bm25_score":   round(float(sparse_score.get(doc_id, 0.0)), 4),
+            "fusion_score": round(float(fusion_score.get(doc_id, 0.0)), 6),
+        }
+        for doc_id in pool
+    ]
+
+    # 5. Cross-encoder rerank → top n_results
+    return rerank(query_text, candidates, text_key=text_key, top_n=n_results)
+
 
 def query_similar_profiles(
     query_text:    str,
@@ -54,69 +153,36 @@ def query_similar_profiles(
     churners_only: bool = True,
 ) -> list[dict]:
     """
-    Find n_results most similar training customers to the query.
+    Hybrid-retrieve the most similar historical customers.
 
-    Args:
-        query_text:    Profile summary of the current customer (same format as indexed docs)
-        n_results:     Number of results to return
-        churners_only: If True, restrict to customers who churned (label=1)
-
-    Returns:
-        List of dicts with keys: document, metadata, similarity
+    Returns list[dict] with keys: document, metadata, similarity
+    (+ rerank_score, bm25_score, fusion_score).
     """
-    col   = _get_profiles()
-    where = {"churn_label": 1} if churners_only else None
-
-    results = col.query(
-        query_texts=[query_text],
-        n_results=n_results,
-        where=where,
-        include=["documents", "metadatas", "distances"],
+    corpus      = _get_profiles_corpus()
+    where       = {"churn_label": 1} if churners_only else None
+    allowed_ids = (
+        {doc_id for doc_id, m in corpus["metas"].items() if m.get("churn_label") == 1}
+        if churners_only else None
     )
-
-    return [
-        {
-            "document":   doc,
-            "metadata":   meta,
-            "similarity": round(1.0 - dist, 4),   # cosine: lower dist = higher similarity
-        }
-        for doc, meta, dist in zip(
-            results["documents"][0],
-            results["metadatas"][0],
-            results["distances"][0],
-        )
-    ]
+    return _hybrid(_get_profiles(), corpus, query_text, "document", n_results, where, allowed_ids)
 
 
 def query_churn_reasons(
-    query_text:     str,
-    n_results:      int   = 10,      # fetch more so dedup in agent2 has material
-    min_similarity: float = 0.35,    # drop semantically distant reasons
+    query_text:     str, 
+    n_results:      int   = 10,
+    min_similarity: float = 0.35,
 ) -> list[dict]:
     """
-    Find n_results most semantically relevant churn reasons.
+    Hybrid-retrieve the most relevant churn reasons.
 
-    Returns:
-        List of dicts with keys: reason, metadata, similarity
+    Returns list[dict] with keys: reason, metadata, similarity
+    (+ rerank_score, bm25_score, fusion_score).
+
+    The cross-encoder reranker is now the primary relevance gate; min_similarity is
+    applied as a soft cosine floor with a fallback, so the very short reason strings
+    (whose dense cosine against a long query is naturally low) are not all discarded.
     """
-    col = _get_reasons()
-
-    results = col.query(
-        query_texts=[query_text],
-        n_results=n_results,
-        include=["documents", "metadatas", "distances"],
-    )
-
-    raw = [
-        {
-            "reason":     doc,
-            "metadata":   meta,
-            "similarity": round(1.0 - dist, 4),
-        }
-        for doc, meta, dist in zip(
-            results["documents"][0],
-            results["metadatas"][0],
-            results["distances"][0],
-        )
-    ]
-    return [r for r in raw if r["similarity"] >= min_similarity]
+    corpus   = _get_reasons_corpus()
+    reranked = _hybrid(_get_reasons(), corpus, query_text, "reason", n_results, None, None)
+    filtered = [r for r in reranked if r["similarity"] >= min_similarity]
+    return filtered if filtered else reranked

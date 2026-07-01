@@ -12,6 +12,9 @@ import type {
   Agent2Event,
   Agent3Event,
   DoneEvent,
+  WSAgent,
+  WSDone,
+  WSMessage,
 } from "./types";
 
 export const API_BASE =
@@ -107,6 +110,61 @@ export function streamAnalysis(
   });
 
   return es;
+}
+
+// ── Analysis (WebSocket, token streaming) ─────────────────────────────────────
+export interface WSHandlers {
+  onAgentStart?: (agent: WSAgent) => void;
+  onToken?: (agent: WSAgent, text: string) => void;
+  onAgentComplete?: (agent: WSAgent, data: Record<string, unknown>) => void;
+  onDone?: (d: WSDone) => void;
+  onError?: (msg: string) => void;
+}
+
+/**
+ * Opens a WebSocket to the war-room stream (token-level).
+ * Returns the WebSocket so the caller can close() it on unmount.
+ */
+export function streamAnalysisWS(
+  id: number,
+  customerState: string,
+  handlers: WSHandlers
+): WebSocket {
+  const wsBase = API_BASE.replace(/^http/, "ws"); // http→ws, https→wss
+  const ws = new WebSocket(
+    `${wsBase}/api/analyze/${id}/ws?customer_state=${customerState}`
+  );
+
+  ws.onmessage = (e) => {
+    let m: WSMessage;
+    try {
+      m = JSON.parse(e.data as string);
+    } catch {
+      return;
+    }
+    switch (m.type) {
+      case "agent_start":
+        handlers.onAgentStart?.(m.agent);
+        break;
+      case "token":
+        handlers.onToken?.(m.agent, m.text);
+        break;
+      case "agent_complete":
+        handlers.onAgentComplete?.(m.agent, m.data);
+        break;
+      case "done":
+        handlers.onDone?.(m);
+        ws.close();
+        break;
+      case "error":
+        handlers.onError?.(m.message);
+        ws.close();
+        break;
+    }
+  };
+  ws.onerror = () => handlers.onError?.("WebSocket connection error");
+
+  return ws;
 }
 
 // ── Logs ──────────────────────────────────────────────────────────────────────

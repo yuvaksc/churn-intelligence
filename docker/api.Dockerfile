@@ -39,6 +39,9 @@ COPY api/        ./api/
 COPY agents/     ./agents/
 COPY rag/        ./rag/
 COPY mcp_server/ ./mcp_server/
+COPY db/         ./db/
+COPY guardrails/ ./guardrails/
+COPY eval/       ./eval/
 
 # Mount points for bind-mounted volumes
 RUN mkdir -p /app/models /app/data

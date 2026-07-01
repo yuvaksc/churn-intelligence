@@ -18,14 +18,12 @@ import json
 import os
 import uuid
 from datetime import datetime
-from pathlib import Path
 
 from fastmcp import FastMCP
 from mcp_server.policies import get_policy
 from mcp_server.competitors import get_competitor_info, FEATURE_DICTIONARY
-
-_PROJECT_ROOT = Path(__file__).parent.parent
-LOG_PATH      = _PROJECT_ROOT / "models" / "reports" / "retention_log.jsonl"
+from db.crm import get_account_history as _account_history, get_open_tickets as _open_tickets
+from db.recommendations import get_recommendations_for_customer as _prior_recs
 
 mcp = FastMCP("Churn Retention MCP Server")
 
@@ -79,26 +77,54 @@ def log_retention_action(
         f"RET-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
         f"-{str(uuid.uuid4())[:6].upper()}"
     )
-    entry = {
-        "log_id":         log_id,
-        "customer_id":    customer_id,
-        "risk_score":     round(risk_score, 4),
-        "offer_text":     offer_text,
-        "contract_type":  contract_type,
-        "monthly_charge": round(monthly_charge, 2),
-        "timestamp":      datetime.now().isoformat(),
-        "status":         "PENDING_CONTACT",
-        "assigned_to":    "Retention Team Queue",
-    }
-    LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with open(LOG_PATH, "a") as f:
-        f.write(json.dumps(entry) + "\n")
-
+    # Persistence is owned by the api process (SQLite recommendations table).
+    # This tool just mints the CRM ticket id and returns it; the API writes the
+    # full record after the war-room run completes.
     return {
         "status":  "logged",
         "log_id":  log_id,
         "message": f"Retention action queued for customer {customer_id}",
     }
+
+
+# ── Data-backed CRM tools (read-only; query the shared SQLite app.db) ─────────
+
+@mcp.tool()
+def get_account_history(customer_id: str) -> dict:
+    """
+    Returns the customer's account snapshot: tenure, contract, monthly/total
+    charges, services, payment method, and current account standing.
+    Call to ground the retention offer in the customer's actual account.
+
+    Args:
+        customer_id: war-room customer id, e.g. 'TEST-4521'
+    """
+    return _account_history(customer_id)
+
+
+@mcp.tool()
+def get_open_tickets(customer_id: str) -> list:
+    """
+    Returns the customer's OPEN support tickets (subject, category, priority).
+    Use to spot unresolved pain points before drafting an offer.
+
+    Args:
+        customer_id: war-room customer id, e.g. 'TEST-4521'
+    """
+    return _open_tickets(customer_id)
+
+
+@mcp.tool()
+def get_prior_recommendations(customer_id: str) -> list:
+    """
+    Returns prior retention recommendations already made for this customer
+    (past offer text and the risk score at the time). Use to avoid repeating
+    an offer the customer has already been given.
+
+    Args:
+        customer_id: war-room customer id, e.g. 'TEST-4521'
+    """
+    return _prior_recs(customer_id)
 
 
 # ── Resources ─────────────────────────────────────────────────────────────────

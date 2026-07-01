@@ -1,44 +1,50 @@
 """api/routes/metrics.py — GET /api/metrics"""
 
 import json
+import asyncio
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException
-from api.schemas import MetricsResponse
-from api.dependencies import AppState, get_state
+from fastapi import APIRouter
 
-router      = APIRouter(tags=["metrics"])
+from api.schemas import MetricsResponse
+from db import customers as db_customers
+
+router       = APIRouter(tags=["metrics"])
 METRICS_PATH = Path("models/reports/agent_evaluation.json")
 
 
 @router.get("/metrics", response_model=MetricsResponse)
-async def get_metrics(state: AppState = Depends(get_state)):
+async def get_metrics():
     """
     Returns model evaluation metrics.
-    Reads from agent_evaluation.json if it exists (run evaluate_agents.py first).
-    Falls back to computing precision/recall from pre-scored test set.
+    Reads from agent_evaluation.json if it exists (run evaluate.py first).
+    Falls back to computing metrics from the pre-scored customers table.
     """
     if METRICS_PATH.exists():
         with open(METRICS_PATH) as f:
             data = json.load(f)
         return MetricsResponse(**data)
 
-    # Fallback: compute from pre-scored state
+    return await asyncio.to_thread(_compute_metrics)
+
+
+def _compute_metrics() -> MetricsResponse:
+    """Fallback: compute precision/recall/ROI from the pre-scored customers table."""
     import numpy as np
     from sklearn.metrics import (
         f1_score, precision_score, recall_score,
-        roc_auc_score, average_precision_score,
-        confusion_matrix,
+        roc_auc_score, average_precision_score, confusion_matrix,
     )
 
-    y_true = state.y_test.values
-    y_prob = state.risk_scores
-    y_pred = (y_prob >= state.threshold).astype(int)
+    rows      = db_customers.fetch_scoring_rows()
+    threshold = db_customers.get_threshold()
+
+    y_true  = np.array([r["true_label"] for r in rows])
+    y_prob  = np.array([r["risk_score"] for r in rows])
+    monthly = np.array([r["monthly_charges"] for r in rows])
+    y_pred  = (y_prob >= threshold).astype(int)
 
     tn, fp, fn, tp = confusion_matrix(y_true, y_pred).ravel()
-
-    eng = state.eng_test_raw
-    monthly = eng["Monthly Charges"].values
 
     RETENTION_SUCCESS = 0.30
     AVG_LTR           = 24
@@ -59,7 +65,7 @@ async def get_metrics(state: AppState = Depends(get_state)):
     fn_missed = float(fn_monthly.sum())
 
     return MetricsResponse(
-        threshold=round(float(state.threshold), 4),
+        threshold=round(float(threshold), 4),
         f1=round(float(f1_score(y_true, y_pred, zero_division=0)), 4),
         precision=round(float(precision_score(y_true, y_pred, zero_division=0)), 4),
         recall=round(float(recall_score(y_true, y_pred, zero_division=0)), 4),

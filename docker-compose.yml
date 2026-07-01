@@ -32,8 +32,12 @@ services:
       MCP_PORT: "8001"
       MCP_HOST: "0.0.0.0"
     volumes:
-      # MCP server writes CRM logs to models/reports/retention_log.jsonl
-      # Mount so logs persist on your host after container stops
+      # Read the shared SQLite app.db for the data-backed CRM tools.
+      # The api stays the ONLY writer; the MCP tools issue SELECTs only.
+      # (RW, not :ro — sqlite3 opens RW by default and a WAL db on a read-only
+      # mount is unreliable.)
+      - ./data:/app/data
+      # Legacy retention-log dir (no longer written by the MCP tool; harmless).
       - ./models/reports:/app/models/reports
     restart: unless-stopped
     # Healthcheck is defined in docker/mcp.Dockerfile
@@ -52,6 +56,11 @@ services:
       # Read from your .env file in the project root (auto-loaded by compose):
       GROQ_API_KEY: ${GROQ_API_KEY}
       GEMINI_API_KEY: ${GEMINI_API_KEY}
+      # LangSmith tracing (Step 5) — values live in .env (gitignored)
+      LANGSMITH_TRACING: ${LANGSMITH_TRACING:-false}
+      LANGSMITH_ENDPOINT: ${LANGSMITH_ENDPOINT:-}
+      LANGSMITH_API_KEY: ${LANGSMITH_API_KEY:-}
+      LANGSMITH_PROJECT: ${LANGSMITH_PROJECT:-churn}
     volumes:
       # models/ and data/ are large and change when you retrain.
       # Bind-mount them so the container always uses your latest files.

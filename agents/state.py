@@ -35,6 +35,11 @@ class WarRoomState(TypedDict):
     retention_offer:  str      # LLM-drafted personalized offer (3 parts: hook/offer/urgency)
     crm_log_id:       str      # e.g. "RET-20240523-143201-A3F8B2"
     crm_logged:       bool     # True once log_retention_action has been called
+    tools_used:       list     # MCP tool names the LLM chose to call (dynamic)
+
+    # ── Supervisor — cross-agent routing ──────────────────────────────────────
+    next_agent:       str      # supervisor's chosen next node ("agent2" | "FINISH" | …)
+    agent_path:       list     # ordered log of routing decisions (audit / visibility)
 
     # ── LangGraph internals ───────────────────────────────────────────────────
     messages: Annotated[list, add_messages]

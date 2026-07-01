@@ -61,6 +61,9 @@ class WarRoomResult(BaseModel):
     competitor_intel: dict
     crm_log_id:       str
     crm_logged:       bool
+    tools_used:       list[str] = []
+    trace_id:         str  = ""          # audit-log correlation id
+    guardrails:       dict = {}          # output guardrail report
 
 
 # SSE event payloads — one per agent node
@@ -83,6 +86,7 @@ class Agent3Event(BaseModel):
     competitor_intel: dict
     crm_log_id:      str
     crm_logged:      bool
+    tools_used:      list[str] = []
 
 
 # ── Logs endpoint ─────────────────────────────────────────────────────────────

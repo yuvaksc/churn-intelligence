@@ -4,7 +4,7 @@
 import { use, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { ArrowLeft, CheckCircle2 } from "lucide-react";
-import { getCustomer, streamAnalysis } from "@/lib/api";
+import { getCustomer, streamAnalysisWS } from "@/lib/api";
 import type {
   CustomerDetail,
   Agent1Event,
@@ -38,11 +38,16 @@ export default function WarRoomPage({
   const [a2Data, setA2Data] = useState<Agent2Event | null>(null);
   const [a3Data, setA3Data] = useState<Agent3Event | null>(null);
 
+  // live token buffers (shown while an agent is "active")
+  const [a1Tok, setA1Tok] = useState("");
+  const [a2Tok, setA2Tok] = useState("");
+  const [a3Tok, setA3Tok] = useState("");
+
   const [running, setRunning] = useState(false);
   const [done, setDone] = useState(false);
   const [streamError, setStreamError] = useState<string | null>(null);
 
-  const esRef = useRef<EventSource | null>(null);
+  const wsRef = useRef<WebSocket | null>(null);
 
   useEffect(() => {
     getCustomer(numericId)
@@ -51,48 +56,67 @@ export default function WarRoomPage({
   }, [numericId]);
 
   useEffect(() => {
-    return () => { esRef.current?.close(); };
+    return () => { wsRef.current?.close(); };
   }, []);
 
   function resetAgents() {
-    setA1Status("idle"); setA1Data(null);
-    setA2Status("idle"); setA2Data(null);
-    setA3Status("idle"); setA3Data(null);
+    setA1Status("idle"); setA1Data(null); setA1Tok("");
+    setA2Status("idle"); setA2Data(null); setA2Tok("");
+    setA3Status("idle"); setA3Data(null); setA3Tok("");
     setDone(false);
     setStreamError(null);
   }
 
   function runAnalysis() {
-    esRef.current?.close();
+    wsRef.current?.close();
     resetAgents();
     setRunning(true);
-    setA1Status("active");
+    setA1Status("active");   // optimistic: the supervisor routes to agent1 first
 
-    esRef.current = streamAnalysis(numericId, customerState, {
-      onAgent1(d) {
-        setA1Data(d);
-        setA1Status("complete");
-        setA2Status("active");
+    wsRef.current = streamAnalysisWS(numericId, customerState, {
+      onAgentStart(agent) {
+        if (agent === "agent1") setA1Status("active");
+        if (agent === "agent2") setA2Status("active");
+        if (agent === "agent3") setA3Status("active");
       },
-      onAgent2(d) {
-        setA2Data(d);
-        setA2Status("complete");
-        setA3Status("active");
+      onToken(agent, text) {
+        if (agent === "agent1") setA1Tok((s) => s + text);
+        if (agent === "agent2") setA2Tok((s) => s + text);
+        if (agent === "agent3") setA3Tok((s) => s + text);
       },
-      onAgent3(d) {
-        setA3Data(d);
-        setA3Status("complete");
+      onAgentComplete(agent, data) {
+        if (agent === "agent1") {
+          const d = data as unknown as Agent1Event;
+          setA1Data(d);
+          setA1Status("complete");
+          // keep the pipeline visibly working through the supervisor's routing +
+          // agent2's retrieval, so there's no "dead" gap where nothing spins
+          if (d.risk_label === "HIGH") setA2Status("active");
+        }
+        if (agent === "agent2") {
+          setA2Data(data as unknown as Agent2Event);
+          setA2Status("complete");
+          setA3Status("active");
+        }
+        if (agent === "agent3") {
+          setA3Data(data as unknown as Agent3Event);
+          setA3Status("complete");
+        }
       },
       onDone() {
         setDone(true);
         setRunning(false);
+        // anything that didn't actually complete (low-risk skip, or an optimistic
+        // activation that never ran) → skipped, so nothing is left spinning
+        setA2Status((s) => (s === "complete" ? s : "skipped"));
+        setA3Status((s) => (s === "complete" ? s : "skipped"));
       },
       onError(msg) {
         setStreamError(msg);
         setRunning(false);
-        setA1Status((s) => s === "active" ? "idle" : s);
-        setA2Status((s) => s === "active" ? "idle" : s);
-        setA3Status((s) => s === "active" ? "idle" : s);
+        setA1Status((s) => (s === "active" ? "idle" : s));
+        setA2Status((s) => (s === "active" ? "idle" : s));
+        setA3Status((s) => (s === "active" ? "idle" : s));
       },
     });
   }
@@ -193,7 +217,7 @@ export default function WarRoomPage({
             cursor: running ? "not-allowed" : "pointer",
           }}
         >
-          {running ? "Running…" : done ? "Re-run Analysis" : "Run Analysis"}
+          {running ? "Streaming…" : done ? "Re-run Analysis" : "Run Analysis"}
         </button>
 
         {done && (
@@ -220,6 +244,7 @@ export default function WarRoomPage({
           subtitle="XGBoost scoring · SHAP attribution"
           accent="var(--risk)"
           status={a1Status}
+          streamingText={a1Tok}
         >
           {a1Data && (
             <div className="space-y-4">
@@ -244,6 +269,7 @@ export default function WarRoomPage({
           subtitle="RAG search · similar profiles · churn reasons"
           accent="var(--warn)"
           status={a2Status}
+          streamingText={a2Tok}
         >
           {a2Data && (
             <div className="space-y-4">
@@ -261,9 +287,10 @@ export default function WarRoomPage({
         <AgentCard
           index={3}
           title="Retention Strategist"
-          subtitle="Offer generation · policy · CRM logging"
+          subtitle="ReAct · dynamic MCP tools · offer"
           accent="var(--safe)"
           status={a3Status}
+          streamingText={a3Tok}
         >
           {a3Data && (
             <div className="space-y-4">
@@ -288,6 +315,22 @@ export default function WarRoomPage({
                   <span>Log ID: {a3Data.crm_log_id.slice(0, 8)}</span>
                 )}
               </div>
+              {a3Data.tools_used && a3Data.tools_used.length > 0 && (
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="font-mono text-[11px]" style={{ color: "var(--text-faint)" }}>
+                    Tools called:
+                  </span>
+                  {a3Data.tools_used.map((t, i) => (
+                    <span
+                      key={`${t}-${i}`}
+                      className="font-mono text-[10px] px-1.5 py-0.5 rounded"
+                      style={{ background: "var(--surface-3)", color: "var(--text-dim)" }}
+                    >
+                      {t}
+                    </span>
+                  ))}
+                </div>
+              )}
               {Object.keys(a3Data.policy).length > 0 && (
                 <details className="group">
                   <summary

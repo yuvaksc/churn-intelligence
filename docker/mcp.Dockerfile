@@ -12,6 +12,7 @@ COPY mcp_server/requirements.txt ./mcp_requirements.txt
 RUN pip install --no-cache-dir -r mcp_requirements.txt
 
 COPY mcp_server/ ./mcp_server/
+COPY db/          ./db/
 
 # Pre-create the log directory so the bind mount lands correctly and
 # log_retention_action() can write without a mkdir race on first call

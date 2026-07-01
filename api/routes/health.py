@@ -1,18 +1,29 @@
 """api/routes/health.py — GET /health"""
 
-from fastapi import APIRouter, Depends
+import asyncio
+
+from fastapi import APIRouter
+
 from api.schemas import HealthResponse
-from api.dependencies import AppState, get_state
+from db import customers as db_customers
 
 router = APIRouter(tags=["system"])
 
 
+def _counts() -> tuple[int, int, float]:
+    """Bundle the three SQLite reads into one thread hop."""
+    return (
+        db_customers.count_customers(),
+        db_customers.count_high_risk(),
+        db_customers.get_threshold(),
+    )
+
+
 @router.get("/health", response_model=HealthResponse)
-async def health(state: AppState = Depends(get_state)):
-    from pathlib import Path
+async def health():
     import chromadb
 
-    high_risk = int((state.risk_scores >= state.threshold).sum())
+    total, high_risk, threshold = await asyncio.to_thread(_counts)
 
     try:
         client      = chromadb.PersistentClient(path="data/chroma_db")
@@ -23,8 +34,8 @@ async def health(state: AppState = Depends(get_state)):
     return HealthResponse(
         status="ok",
         model="xgb_pipeline.pkl",
-        threshold=round(state.threshold, 4),
-        test_set_size=len(state.eng_test_raw),
+        threshold=round(threshold, 4),
+        test_set_size=total,
         high_risk_count=high_risk,
         chroma_collections=collections,
     )
