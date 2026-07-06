@@ -4,16 +4,18 @@ rag/build_index.py — One-time ChromaDB indexing.
 Run once from project root:
     python rag/build_index.py
 
-Creates two collections in data/chroma_db/:
-  churn_profiles  — 4225 training customer summaries (pre-encoding, human-readable)
-                    Used by Agent 2 to find similar historical customers
-  churn_reasons   — 1869 churn reason strings from churn_reasons_rag.csv
-                    Used by Agent 2 to surface why similar customers left
+Creates ONE collection in data/chroma_db/:
+  churn_profiles  — training customer summaries (pre-encoding, human-readable). Each
+                    churner carries its OWN documented `churn_reason` as metadata,
+                    read straight from the raw telco.csv by row index. Agent 2 finds
+                    similar historical churners AND reads off exactly why they left.
 
 Key design:
   - Uses eng_df (pre-encoding) so text is human-readable ("Fiber optic" not "1")
   - Reconstructs the EXACT same train/val/test split (random_state=42)
     so no test-set data leaks into the RAG corpus
+  - The churn reason lives in metadata (NOT in the embedded document) so profile
+    similarity stays feature-based and isn't biased by outcome language
   - Embeddings: sentence-transformers all-MiniLM-L6-v2 (bundled with chromadb)
   - Batch size 500 to stay within ChromaDB memory limits
 """
@@ -67,13 +69,14 @@ def build_profile_text(row: pd.Series, label: int) -> str:
     )
 
 
-def build_profile_metadata(row: pd.Series, label: int) -> dict:
+def build_profile_metadata(row: pd.Series, label: int, churn_reason: str = "") -> dict:
     """
     Structured metadata for ChromaDB filtering (e.g. churners_only=True).
     Only scalar types — ChromaDB does not accept lists or nested dicts.
     """
     return {
         "churn_label":     label,
+        "churn_reason":    churn_reason,   # this customer's own documented reason ("" for stayers)
         "contract":        str(row.get("Contract", "")),
         "internet_service":str(row.get("Internet Service", "")),
         "tenure_months":   int(row.get("Tenure Months", 0)),
@@ -86,7 +89,7 @@ def build_profile_metadata(row: pd.Series, label: int) -> dict:
 
 # ── Collection builders ───────────────────────────────────────────────────────
 
-def build_churn_profiles(client, eng_df: pd.DataFrame, train_idx, y_train: pd.Series):
+def build_churn_profiles(client, eng_df: pd.DataFrame, raw_df: pd.DataFrame, train_idx, y_train: pd.Series):
     from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
 
     ef = SentenceTransformerEmbeddingFunction(model_name="all-MiniLM-L6-v2")
@@ -100,13 +103,20 @@ def build_churn_profiles(client, eng_df: pd.DataFrame, train_idx, y_train: pd.Se
     collection = client.create_collection("churn_profiles", embedding_function=ef)
 
     train_rows = eng_df.loc[train_idx]
+    has_reason = "Churn Reason" in raw_df.columns
 
     documents, metadatas, ids = [], [], []
 
     for row_idx, row in train_rows.iterrows():
         label = int(y_train.loc[row_idx])
+        # a churner's OWN reason, read from the raw CSV by the SAME row index. No leakage:
+        # it is metadata only (never a model feature) and only train rows are indexed.
+        reason = ""
+        if label == 1 and has_reason:
+            raw_reason = str(raw_df.loc[row_idx, "Churn Reason"]).strip()
+            reason = "" if raw_reason.lower() == "nan" else raw_reason
         documents.append(build_profile_text(row, label))
-        metadatas.append(build_profile_metadata(row, label))
+        metadatas.append(build_profile_metadata(row, label, reason))
         ids.append(f"train_{row_idx}")
 
     # Insert in batches
@@ -119,41 +129,11 @@ def build_churn_profiles(client, eng_df: pd.DataFrame, train_idx, y_train: pd.Se
         )
         print(f"  churn_profiles: indexed {end}/{len(documents)} rows")
 
-    churn_count = sum(1 for m in metadatas if m["churn_label"] == 1)
+    churn_count      = sum(1 for m in metadatas if m["churn_label"] == 1)
+    reasons_attached = sum(1 for m in metadatas if m["churn_reason"])
     print(f"  churn_profiles: {collection.count()} total  "
-          f"({churn_count} churners / {len(documents) - churn_count} retained)")
-    return collection
-
-
-def build_churn_reasons(client):
-    from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
-
-    ef = SentenceTransformerEmbeddingFunction(model_name="all-MiniLM-L6-v2")
-
-    try:
-        client.delete_collection("churn_reasons")
-        print("  Dropped existing churn_reasons collection")
-    except Exception:
-        pass
-
-    collection = client.create_collection("churn_reasons", embedding_function=ef)
-
-    rag_df = pd.read_csv("data/raw/churn_reasons_rag.csv")
-
-    documents, metadatas, ids = [], [], []
-
-    for i, row in rag_df.iterrows():
-        reason = str(row.get("Churn Reason", "")).strip()
-        if reason and reason.lower() != "nan":
-            documents.append(reason)
-            metadatas.append({
-                "customer_id":  str(row.get("CustomerID", f"unk_{i}")),
-                "churn_value":  int(row.get("Churn Value", 1)),
-            })
-            ids.append(f"reason_{row.get('CustomerID', i)}")
-
-    collection.add(documents=documents, metadatas=metadatas, ids=ids)
-    print(f"  churn_reasons:  {collection.count()} reasons indexed")
+          f"({churn_count} churners / {len(documents) - churn_count} retained; "
+          f"{reasons_attached} reasons attached)")
     return collection
 
 
@@ -182,11 +162,8 @@ def main():
     CHROMA_DIR.mkdir(parents=True, exist_ok=True)
     client = chromadb.PersistentClient(path=str(CHROMA_DIR))
 
-    print("\n[1/2] Building churn_profiles collection...")
-    build_churn_profiles(client, eng_df, X_train.index, y_train)
-
-    print("\n[2/2] Building churn_reasons collection...")
-    build_churn_reasons(client)
+    print("\nBuilding churn_profiles collection (each churner tagged with its reason)...")
+    build_churn_profiles(client, eng_df, raw_df, X_train.index, y_train)
 
     print(f"\nChromaDB persisted → {CHROMA_DIR.resolve()}")
     print("Re-run only if training data changes.")

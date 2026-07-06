@@ -172,6 +172,14 @@ def get_customer_features(customer_id: int) -> dict | None:
     return json.loads(row["all_features"]) if row else None
 
 
+def fetch_scoring_rows() -> list[dict]:
+    """risk_score / true_label / monthly_charges for every customer — used by the
+    metrics fallback."""
+    with connect() as conn:
+        rows = conn.execute("SELECT risk_score, true_label, monthly_charges FROM customers").fetchall()
+    return [dict(r) for r in rows]
+
+
 def count_customers() -> int:
     with connect() as conn:
         return conn.execute("SELECT COUNT(*) AS n FROM customers").fetchone()["n"]
@@ -180,14 +188,6 @@ def count_customers() -> int:
 def count_high_risk() -> int:
     with connect() as conn:
         return conn.execute("SELECT COUNT(*) AS n FROM customers WHERE risk_label = 'HIGH'").fetchone()["n"]
-
-
-def fetch_scoring_rows() -> list[dict]:
-    """risk_score / true_label / monthly_charges for every customer — used by the
-    metrics fallback."""
-    with connect() as conn:
-        rows = conn.execute("SELECT risk_score, true_label, monthly_charges FROM customers").fetchall()
-    return [dict(r) for r in rows]
 
 
 def get_threshold(default: float = 0.5) -> float:

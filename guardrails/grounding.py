@@ -13,8 +13,9 @@ def _keywords(text: str) -> set:
 def check_grounding(offer_text: str, policy: dict) -> dict:
     """Does the offer reference at least one of the policy's allowed offer types?
 
-    A cheap citation/grounding signal for the live path; the deeper LLM-judged
-    faithfulness/groundedness scores live in the offline eval (eval/run_eval.py).
+    A cheap citation/grounding signal for the live path (also surfaced as the
+    `guardrails` eval metric); the holistic LLM-judged quality score lives in the
+    live eval (eval.score_run → warroom_quality).
     """
     allowed = (policy or {}).get("allowed_offers") or []
     if not offer_text or not allowed:

@@ -15,7 +15,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from api.routes import health, customers, analyze, logs, metrics, audit, ws
+from api.routes import health, customers, logs, metrics, ws
 from db.connection import init_db
 from db.customers import seed_customers
 from db.crm import seed_crm
@@ -63,8 +63,6 @@ app.add_middleware(
 # Routes
 app.include_router(health.router)                          # /health
 app.include_router(customers.router, prefix="/api")        # /api/customers
-app.include_router(analyze.router,   prefix="/api")        # /api/analyze
 app.include_router(logs.router,      prefix="/api")        # /api/logs
 app.include_router(metrics.router,   prefix="/api")        # /api/metrics
-app.include_router(audit.router,     prefix="/api")        # /api/audit
 app.include_router(ws.router,        prefix="/api")        # /api/analyze/{id}/ws

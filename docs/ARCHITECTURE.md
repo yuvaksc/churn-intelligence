@@ -40,8 +40,8 @@ sequenceDiagram
     LLM-->>U: token frames (agent3 offer)
 
     API->>API: guardrails — PII mask · policy ceiling · grounding
-    API->>DB: recommendation + audit_log row
-    API-->>U: done { trace_id }
+    API->>DB: recommendation row
+    API-->>U: done { risk_label }
 ```
 
 Low-risk customers short-circuit: the supervisor routes Agent 1 → **FINISH** and Agents 2/3 never run (the UI marks them *skipped*).
@@ -95,42 +95,29 @@ erDiagram
         TEXT    status
         TEXT    priority
     }
-    audit_log {
-        INTEGER id PK
-        TEXT    trace_id
-        TEXT    customer_id
-        TEXT    agent_path "JSON"
-        TEXT    tools_used "JSON"
-        TEXT    retrieved_profiles "JSON"
-        TEXT    policy "JSON"
-        TEXT    guardrails "JSON"
-        INTEGER latency_ms
-    }
     meta {
         TEXT key PK
         TEXT value "threshold, seed_version, ..."
     }
 ```
 
-Tables are linked logically (by `customer_id`) but not FK-constrained — `customers` uses the integer split index, while `recommendations` stores the display id `TEST-{idx}`. `customers` and `crm_tickets` are **seeded** at startup from the model/test-split; `recommendations` and `audit_log` accumulate per run.
+Tables are linked logically (by `customer_id`) but not FK-constrained — `customers` uses the integer split index, while `recommendations` stores the display id `TEST-{idx}`. `customers` and `crm_tickets` are **seeded** at startup from the model/test-split; `recommendations` accumulate per run.
 
 ## Safety & evaluation flow
 
 ```mermaid
 flowchart TD
-    IN[customer_state + features] --> SCAN[input scan · injection heuristic]
-    SCAN --> RUN[war room run]
+    IN[customer_state + features] --> RUN[war room run]
     RUN --> OFFER[agent 3 offer]
     OFFER --> PII[PII mask]
     PII --> POL[policy-ceiling check]
     POL --> GRD[grounding / citation check]
     GRD --> RESP[response + guardrail report]
-    RESP --> AUD[(audit_log)]
-    RUN -. offline .-> EVAL[eval.run_eval → LangSmith dataset + experiment]
+    RUN -->|live, per run| EVAL[war-room run = experiment on churn-eval: completeness / quality / guardrails]
 ```
 
-- **Guardrails** run inline on every request (both POST and WS paths) and never block hard (this is an internal analyst tool) — violations are flagged and recorded.
-- **Eval** is intentionally **offline** (a separate runner), so the request path stays fast; it scores runs against a LangSmith dataset with deterministic checks + Groq LLM-judges.
+- **Guardrails** run inline on the drafted offer for every request (both POST and WS paths) and never block hard (this is an internal analyst tool) — violations are flagged on the response.
+- **Eval** runs **live** as part of every analysis: the WebSocket attaches `eval.experiment_callbacks(...)` to the war-room run so the actual graph execution is traced *as an experiment run* under the `churn-eval` dataset (its own full waterfall, linked to the same-label golden archetype). After the `done` frame, `eval.score_run(...)` attaches three feedback metrics — `output_completeness` (a deterministic check that the run produced all the JSON elements the archetype has for its risk label), `warroom_quality` (a holistic Groq LLM-judge: overall score + the reasoning behind it), and `guardrails` (did the offer's PII / policy-ceiling / grounding checks all pass; offer runs only). Each analysis is its own experiment (`churn-warroom-<customer>-<time>`), so runs never collapse into repetitions of the shared archetype example. Best-effort — a no-op when tracing is off, and it never delays the UI. The three golden customers are per-label **archetypes** of the expected output (linked by risk label, not matched per customer).
 
 ## Streaming internals
 
@@ -140,7 +127,6 @@ The WebSocket endpoint (`api/routes/ws.py`) drives `war_room_graph.astream_event
 |---|---|
 | `on_chat_model_stream` (node ∈ agent1/2/3) | `{type: "token", agent, text}` |
 | node `on_chain_end` | `{type: "agent_complete", agent, data}` |
-| supervisor `on_chain_end` | captured for `agent_path` (not surfaced) |
-| stream end | `{type: "done", risk_label, trace_id}` |
+| stream end | `{type: "done", risk_label, input_scan}` |
 
-Only the three narrative agents stream tokens; the supervisor's structured-output routing and Agent 3's tool-deciding calls carry no useful text. The SSE endpoint (`/stream`) remains as a node-level fallback.
+Only the three narrative agents stream tokens; the supervisor's structured-output routing and Agent 3's tool-deciding calls carry no useful text. The WebSocket is the war room's single entry point — there is no separate POST or SSE path.

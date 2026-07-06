@@ -1,5 +1,5 @@
 """
-rag/retriever.py — Hybrid retrieval over both ChromaDB collections.
+rag/retriever.py — Hybrid retrieval over the churn_profiles ChromaDB collection.
 
 Pipeline (per query):
     dense (Chroma vector search) + sparse (in-memory BM25)
@@ -8,13 +8,13 @@ Pipeline (per query):
         → cross-encoder rerank
         → top-N
 
-Public API (signatures + return shapes unchanged; adds rerank_score / bm25_score /
-fusion_score keys, which downstream consumers ignore):
+Public API:
     query_similar_profiles(query_text, n_results, churners_only) -> list[dict]
-    query_churn_reasons(query_text, n_results, min_similarity)    -> list[dict]
+      each churner profile carries its own documented `churn_reason` in metadata,
+      plus rerank_score / bm25_score / fusion_score (downstream ignores the scores).
 
-Lazy-loads the Chroma client/collections, a per-collection BM25 index (built once
-from the stored documents), and the cross-encoder (see rag/rerank.py).
+Lazy-loads the Chroma client/collection, a BM25 index (built once from the stored
+documents), and the cross-encoder (see rag/rerank.py).
 """
 
 from pathlib import Path
@@ -36,10 +36,8 @@ RERANK_POOL = 40    # max fused candidates sent to the cross-encoder
 
 _client_instance   = None
 _profiles_instance = None
-_reasons_instance  = None
 _ef_instance       = None
 _profiles_corpus   = None
-_reasons_corpus    = None
 
 
 def _ef():
@@ -65,13 +63,6 @@ def _get_profiles():
     return _profiles_instance
 
 
-def _get_reasons():
-    global _reasons_instance
-    if _reasons_instance is None:
-        _reasons_instance = _get_client().get_collection("churn_reasons", embedding_function=_ef())
-    return _reasons_instance
-
-
 def _load_corpus(collection) -> dict:
     """Pull all docs + metadata once and build a BM25 index over them (cached)."""
     data = collection.get(include=["documents", "metadatas"])
@@ -88,13 +79,6 @@ def _get_profiles_corpus():
     if _profiles_corpus is None:
         _profiles_corpus = _load_corpus(_get_profiles())
     return _profiles_corpus
-
-
-def _get_reasons_corpus():
-    global _reasons_corpus
-    if _reasons_corpus is None:
-        _reasons_corpus = _load_corpus(_get_reasons())
-    return _reasons_corpus
 
 
 def _cosine(a: np.ndarray, b: np.ndarray) -> float:
@@ -165,24 +149,3 @@ def query_similar_profiles(
         if churners_only else None
     )
     return _hybrid(_get_profiles(), corpus, query_text, "document", n_results, where, allowed_ids)
-
-
-def query_churn_reasons(
-    query_text:     str, 
-    n_results:      int   = 10,
-    min_similarity: float = 0.35,
-) -> list[dict]:
-    """
-    Hybrid-retrieve the most relevant churn reasons.
-
-    Returns list[dict] with keys: reason, metadata, similarity
-    (+ rerank_score, bm25_score, fusion_score).
-
-    The cross-encoder reranker is now the primary relevance gate; min_similarity is
-    applied as a soft cosine floor with a fallback, so the very short reason strings
-    (whose dense cosine against a long query is naturally low) are not all discarded.
-    """
-    corpus   = _get_reasons_corpus()
-    reranked = _hybrid(_get_reasons(), corpus, query_text, "reason", n_results, None, None)
-    filtered = [r for r in reranked if r["similarity"] >= min_similarity]
-    return filtered if filtered else reranked

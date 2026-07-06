@@ -26,7 +26,7 @@ class WarRoomState(TypedDict):
 
     # ── Agent 2 — Evidence Researcher ─────────────────────────────────────────
     similar_profiles: list     # top-5 from churn_profiles ChromaDB collection
-    churn_reasons:    list     # top-7 from churn_reasons ChromaDB collection
+    churn_reasons:    list     # retrieved churners' own documented reasons, frequency-ranked
     evidence_report:  str      # LLM-synthesized 3-sentence paragraph
 
     # ── Agent 3 — Mitigation Architect ────────────────────────────────────────
@@ -39,7 +39,7 @@ class WarRoomState(TypedDict):
 
     # ── Supervisor — cross-agent routing ──────────────────────────────────────
     next_agent:       str      # supervisor's chosen next node ("agent2" | "FINISH" | …)
-    agent_path:       list     # ordered log of routing decisions (audit / visibility)
+    agent_path:       list     # ordered log of routing decisions (routing visibility)
 
     # ── LangGraph internals ───────────────────────────────────────────────────
     messages: Annotated[list, add_messages]

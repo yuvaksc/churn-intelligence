@@ -38,24 +38,7 @@ export interface ChurnReason {
   similarity: number;
 }
 
-export interface WarRoomResult {
-  customer_id: string;
-  risk_score: number;
-  risk_label: string;
-  risk_summary: string;
-  shap_drivers: ShapDriver[];
-  evidence_report: string;
-  similar_profiles: SimilarProfile[];
-  churn_reasons: ChurnReason[];
-  retention_offer: string;
-  policy: Record<string, unknown>;
-  competitor_intel: Record<string, unknown>;
-  crm_log_id: string;
-  crm_logged: boolean;
-  tools_used?: string[];
-}
-
-// SSE event payloads
+// Per-agent completion payloads (the `data` object in a WS agent_complete frame)
 export interface Agent1Event {
   risk_score: number;
   risk_label: string;
@@ -78,9 +61,9 @@ export interface Agent3Event {
   tools_used?: string[];
 }
 
-export interface DoneEvent {
-  status: string;
-  risk_label: string;
+export interface InputScan {
+  ok: boolean;        // false if a prompt-injection pattern was found in the customer data
+  matches: string[];  // the patterns that matched (empty when ok)
 }
 
 export interface RetentionLogEntry {
@@ -128,7 +111,7 @@ export type WSAgent = "agent1" | "agent2" | "agent3";
 export interface WSAgentStart { type: "agent_start"; agent: WSAgent; }
 export interface WSToken { type: "token"; agent: WSAgent; text: string; }
 export interface WSAgentComplete { type: "agent_complete"; agent: WSAgent; data: Record<string, unknown>; }
-export interface WSDone { type: "done"; risk_label: string; trace_id: string; }
+export interface WSDone { type: "done"; risk_label: string; input_scan?: InputScan; }
 export interface WSError { type: "error"; message: string; }
 
 export type WSMessage = WSAgentStart | WSToken | WSAgentComplete | WSDone | WSError;

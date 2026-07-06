@@ -62,18 +62,12 @@ def load_raw() -> pd.DataFrame:
     return df
 
 
-def extract_rag_corpus(df: pd.DataFrame) -> None:
-    rag_cols = [c for c in ["CustomerID", "Churn Value", RAG_TEXT_COL] if c in df.columns]
-    rag_df   = df[rag_cols].dropna(subset=[RAG_TEXT_COL])
-    rag_df   = rag_df[rag_df[RAG_TEXT_COL].str.strip() != ""]
-    out_path = RAW_DIR / "churn_reasons_rag.csv"
-    rag_df.to_csv(out_path, index=False)
-    print(f"RAG corpus: {len(rag_df)} churn reasons -> {out_path}")
-
-
 def clean(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
-    extract_rag_corpus(df)
+    # `Churn Reason` is a post-outcome field → dropped here so it never becomes a model
+    # feature (target-leakage guard). It is re-read straight from the raw CSV at RAG
+    # index-build time and attached to each TRAIN churner's profile as metadata
+    # (rag/build_index.py) — same split, no leakage.
     cols_to_drop = [c for c in GEO_COLS + LEAKAGE_COLS + [RAG_TEXT_COL] if c in df.columns]
     df.drop(columns=cols_to_drop, inplace=True)
     print(f"Dropped {len(cols_to_drop)} non-feature columns")

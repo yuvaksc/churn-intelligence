@@ -40,55 +40,6 @@ class CustomerDetail(CustomerSummary):
     top_shap_drivers: list[ShapDriver]
 
 
-# ── War room / analysis endpoints ─────────────────────────────────────────────
-
-class WarRoomRequest(BaseModel):
-    customer_state: str = "DEFAULT"   # US state for competitor intel
-
-
-class WarRoomResult(BaseModel):
-    """Full result returned by POST /analyze/{customer_id}."""
-    customer_id:      str
-    risk_score:       float
-    risk_label:       str
-    risk_summary:     str
-    shap_drivers:     list[ShapDriver]
-    evidence_report:  str
-    similar_profiles: list[dict]
-    churn_reasons:    list[dict]
-    retention_offer:  str
-    policy:           dict
-    competitor_intel: dict
-    crm_log_id:       str
-    crm_logged:       bool
-    tools_used:       list[str] = []
-    trace_id:         str  = ""          # audit-log correlation id
-    guardrails:       dict = {}          # output guardrail report
-
-
-# SSE event payloads — one per agent node
-class Agent1Event(BaseModel):
-    risk_score:   float
-    risk_label:   str
-    shap_drivers: list[ShapDriver]
-    risk_summary: str
-
-
-class Agent2Event(BaseModel):
-    evidence_report:  str
-    similar_profiles: list[dict]
-    churn_reasons:    list[dict]
-
-
-class Agent3Event(BaseModel):
-    retention_offer: str
-    policy:          dict
-    competitor_intel: dict
-    crm_log_id:      str
-    crm_logged:      bool
-    tools_used:      list[str] = []
-
-
 # ── Logs endpoint ─────────────────────────────────────────────────────────────
 
 class RetentionLogEntry(BaseModel):

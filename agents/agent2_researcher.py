@@ -11,7 +11,10 @@ import asyncio
 
 from agents.state import WarRoomState
 from agents.llm_config import get_analytical_llm
-from rag.retriever import query_similar_profiles, query_churn_reasons
+from rag.retriever import query_similar_profiles
+
+_DISPLAY_K   = 5    # similar churners shown to the LLM / UI
+_REASON_POOL = 12   # wider pool retrieved only for the reason-frequency signal
 
 
 _EVIDENCE_PROMPT = """\
@@ -65,17 +68,33 @@ def _format_profiles(profiles: list) -> str:
     lines = []
     for i, p in enumerate(profiles, 1):
         churned = "CHURNED" if p["metadata"]["churn_label"] == 1 else "STAYED"
+        reason  = (p["metadata"].get("churn_reason") or "").strip()
         doc     = p["document"][:160].rstrip("|").strip()
-        lines.append(f"  {i}. [{churned}] (sim={p['similarity']:.2f})  {doc}...")
+        tail    = f'  → left: "{reason}"' if reason else ""
+        lines.append(f"  {i}. [{churned}] (sim={p['similarity']:.2f})  {doc}...{tail}")
     return "\n".join(lines)
 
 
+def _aggregate_reasons(profiles: list) -> list[dict]:
+    """Frequency-rank the documented churn reasons of the retrieved churners. Each entry
+    keeps the same shape the rest of the app expects: reason / metadata.count / similarity."""
+    agg: dict[str, dict] = {}
+    for p in profiles:
+        reason = ((p.get("metadata") or {}).get("churn_reason") or "").strip()
+        if not reason:
+            continue
+        e = agg.setdefault(reason, {"reason": reason, "count": 0, "similarity": 0.0})
+        e["count"]     += 1
+        e["similarity"] = max(e["similarity"], float(p.get("similarity", 0.0)))
+    ranked = sorted(agg.values(), key=lambda x: (-x["count"], -x["similarity"]))
+    return [
+        {"reason": e["reason"], "metadata": {"count": e["count"]}, "similarity": round(e["similarity"], 4)}
+        for e in ranked
+    ]
+
+
 def _format_reasons(reasons: list) -> str:
-    counts: dict[str, int] = {}
-    for r in reasons:
-        counts[r["reason"]] = counts.get(r["reason"], 0) + 1
-    top3 = sorted(counts.items(), key=lambda x: -x[1])[:3]
-    return "\n".join(f"  • {reason}  (×{count})" for reason, count in top3)
+    return "\n".join(f"  • {r['reason']}  (×{r['metadata']['count']})" for r in reasons[:3])
 
 
 def _litm_order(items: list) -> list:
@@ -96,13 +115,15 @@ async def agent2_node(state: WarRoomState) -> dict:
     snapshot   = _customer_snapshot(state["customer_raw"])
     query_text = f"{state['risk_summary']} | {snapshot}"
 
-    # Hybrid retrieval (dense + BM25 + RRF + cross-encoder rerank) is blocking
-    # CPU work → offload to a thread so the event loop stays free.
-    similar_profiles = await asyncio.to_thread(query_similar_profiles, query_text, 5, True)
-    churn_reasons    = await asyncio.to_thread(query_churn_reasons, query_text, 10)
+    # One hybrid retrieval (dense + BM25 + RRF + cross-encoder rerank) over churn_profiles;
+    # each churner carries its own documented reason. Pull a wider pool for the
+    # reason-frequency signal, show the top few. Blocking CPU → offload to a thread.
+    pool             = await asyncio.to_thread(query_similar_profiles, query_text, _REASON_POOL, True)
+    similar_profiles = pool[:_DISPLAY_K]
+    churn_reasons    = _aggregate_reasons(pool)
 
-    print(f"  Similar churner profiles retrieved:  {len(similar_profiles)}")
-    print(f"  Churn reasons retrieved:             {len(churn_reasons)}")
+    print(f"  Similar churners retrieved:  {len(pool)} (showing {len(similar_profiles)})")
+    print(f"  Distinct churn reasons:      {len(churn_reasons)}")
     if similar_profiles:
         top = similar_profiles[0]
         print(f"  Most similar: similarity={top['similarity']:.2f}  "

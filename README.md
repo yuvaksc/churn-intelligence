@@ -1,11 +1,10 @@
 # Churn Intelligence — Multi-Agent Retention Platform
 
-An **enterprise-style AI platform** that turns a telecom churn model into an analyst tool: it scores a customer with **XGBoost + SHAP**, then runs a **LangGraph multi-agent "war room"** — diagnose → gather evidence (hybrid RAG) → draft a policy-safe retention offer (a ReAct agent that discovers and calls **MCP tools**) — streaming every agent's reasoning **token-by-token over WebSockets**. Every run is **traced (LangSmith)**, **guard-railed**, and **audited**.
+An **enterprise-style AI platform** that turns a telecom churn model into an analyst tool: it scores a customer with **XGBoost + SHAP**, then runs a **LangGraph multi-agent "war room"** — diagnose → gather evidence (hybrid RAG) → draft a policy-safe retention offer (a ReAct agent that discovers and calls **MCP tools**) — streaming every agent's reasoning **token-by-token over WebSockets**. Every run is **traced (LangSmith)** and **guard-railed**.
 
 > Groq-only LLMs · SQLite (raw SQL) · ChromaDB + BM25 + cross-encoder rerank · single enriched MCP server · FastAPI · Next.js · Docker Compose · GitHub Actions → GHCR.
 
-<!-- CI badge — replace OWNER/REPO -->
-<!-- ![CI](https://github.com/OWNER/REPO/actions/workflows/ci.yml/badge.svg) -->
+[![CI](https://github.com/yuvaksc/churn-intelligence/actions/workflows/ci.yml/badge.svg)](https://github.com/yuvaksc/churn-intelligence/actions/workflows/ci.yml)
 
 ---
 
@@ -15,7 +14,7 @@ An **enterprise-style AI platform** that turns a telecom churn model into an ana
 - **Agentic tool use over MCP** — Agent 3 is a **ReAct loop**: it *discovers* the MCP server's tools via `list_tools()`, binds them to the LLM, and the model decides which to call (retention policy, competitor intel, account history, open tickets, prior recommendations) before drafting an offer.
 - **Expert RAG** — hybrid retrieval (**dense ChromaDB + in-memory BM25 → Reciprocal Rank Fusion → cross-encoder rerank**) with lost-in-the-middle context packing and a cite-or-refuse prompt.
 - **Token-level streaming** — a WebSocket endpoint drives `astream_events` and pushes `agent_start` / `token` / `agent_complete` frames; the Next.js UI renders each agent's text live.
-- **Observability & safety** — an offline **LangSmith** eval harness (dataset + LLM-judge & deterministic evaluators), an append-only **audit trail**, and backend **guardrails** (PII masking, hard policy-ceiling checks, grounding, prompt-injection heuristics).
+- **Observability & safety** — **LangSmith** tracing where every run is recorded live as a `churn-eval` experiment scored by three metrics (output-completeness + an LLM-judge + guardrails), plus backend **guardrails** (PII masking, hard policy-ceiling checks, grounding, prompt-injection heuristics).
 - **Production hygiene** — raw-SQL SQLite persistence, a 3-service Docker Compose stack, a `pytest` suite, and CI (ruff + pytest + image builds to **GHCR**).
 
 ---
@@ -69,7 +68,7 @@ flowchart TD
 | Agent | Does | Tech |
 |---|---|---|
 | **1 · Diagnostic** | risk score + top SHAP drivers + a short LLM summary | XGBoost, SHAP, Groq |
-| **2 · Evidence** | retrieves similar historical churners + churn reasons, writes a cited evidence report | Hybrid RAG (below) |
+| **2 · Evidence** | retrieves similar historical churners with their documented reasons, writes a cited evidence report | Hybrid RAG (below) |
 | **3 · Mitigation** | dynamically calls MCP tools, drafts a within-policy offer, logs it | ReAct + MCP + Groq |
 | **Supervisor** | risk-gate + LLM routing (bounded, no loops) | LangGraph + Groq |
 
@@ -88,7 +87,7 @@ flowchart LR
     P --> G[Groq -> cited evidence report]
 ```
 
-Public retriever API is unchanged (`query_similar_profiles`, `query_churn_reasons`); the hybrid + rerank happens underneath, adding `rerank_score` / `bm25_score` to each result. BM25 is hand-rolled (no extra dependency); the cross-encoder reuses `sentence-transformers`.
+One hybrid search over the `churn_profiles` collection, where each churner carries its **own documented churn reason** as metadata — read straight from the raw CSV by row index, **train split only** (the reason is dropped from the model's features to avoid target leakage, then re-attached to the RAG profile). Agent 2 retrieves similar past churners and frequency-ranks *their* reasons, so the evidence is provably from the customers shown. `query_similar_profiles` returns each result with `rerank_score` / `bm25_score`; BM25 is hand-rolled (no extra dependency) and the cross-encoder reuses `sentence-transformers`.
 
 ---
 
@@ -112,9 +111,8 @@ The MCP server exposes retention-policy, competitor-intel and **data-backed CRM 
 
 ## Observability & Safety
 
-- **LangSmith** — set `LANGSMITH_TRACING=true` and every run is traced to your project. The offline harness `python -m eval.run_eval` builds a **dataset** and runs an **experiment** with deterministic (policy-ceiling, citation, tools-used, latency) + **Groq LLM-judge** (faithfulness, groundedness, answer-relevance) evaluators.
-- **Audit** — every analysis writes one append-only `audit_log` row (routing path, retrieved docs, tool calls, policy, offer, guardrail report, latency), reconstructable at `GET /api/audit/{trace_id}`.
-- **Guardrails** — PII masking, a hard policy-ceiling check on the drafted discount, a grounding/citation check, and a prompt-injection heuristic; results ride along on the response and the audit row.
+- **LangSmith** — set `LANGSMITH_TRACING=true` and each war-room run is traced **as an experiment run on the `churn-eval` dataset** (visible under Datasets & Experiments): the actual execution *is* the experiment run, so it carries the full agent1/2/3 waterfall, per-node latency and token usage, linked to the golden of its risk label. Three feedback metrics are attached: `output_completeness` (did the run produce all the JSON elements the reference archetype has for its risk label), `warroom_quality` (a holistic **Groq LLM-judge** — an overall score plus the reasoning behind it), and `guardrails` (did the offer's PII / policy-ceiling / grounding checks all pass). The three golden customers are per-label **archetypes** of the expected output, not a per-customer answer key.
+- **Guardrails** — PII masking, a hard policy-ceiling check on the drafted discount, a grounding/citation check, and a prompt-injection heuristic; results ride along on the response.
 
 ---
 
@@ -123,9 +121,8 @@ The MCP server exposes retention-policy, competitor-intel and **data-backed CRM 
 **Prerequisites:** Docker Desktop, a [Groq API key](https://console.groq.com), and the [IBM Telco Customer Churn](https://www.kaggle.com/datasets/blastchar/telco-customer-churn) CSV at `data/raw/telco.csv`.
 
 ```bash
-# 1. Train the model (XGBoost + SHAP -> models/) and build the vector index
+# 1. Train the model (XGBoost + SHAP -> models/)
 python run_pipeline.py
-python rag/build_index.py
 
 # 2. Configure secrets (KEY=VALUE lines only -- no comments; compose is strict)
 cat > .env <<'EOF'
@@ -139,13 +136,18 @@ EOF
 # 3. Launch the stack (the api seeds SQLite from the model on first boot)
 docker compose up -d --build
 
-# 4. Open the dashboard
+# 4. Build the vector index INSIDE the container, so the ChromaDB that writes the
+#    store is the exact one that serves it. Building it elsewhere (e.g. locally)
+#    can leave a store the container can't open ("could not connect to tenant").
+docker compose exec api python rag/build_index.py
+
+# 5. Open the dashboard
 #    http://localhost:3000        (UI)
 #    http://localhost:8000/docs   (OpenAPI)
 ```
 
 Pick a **HIGH-risk** customer → **Run Analysis** → watch each agent stream its reasoning live.
-Offline eval: `docker compose exec api python -m eval.run_eval`.
+Each run appears as an experiment on the `churn-eval` dataset — full waterfall + `output_completeness` / `warroom_quality` / `guardrails` metrics.
 
 ---
 
@@ -168,21 +170,18 @@ Offline eval: `docker compose exec api python -m eval.run_eval`.
 | `GET` | `/health` | model + test-set + Chroma status |
 | `GET` | `/api/customers` | risk-sorted list (`limit`, `offset`, `risk_only`) |
 | `GET` | `/api/customers/{id}` | full features + top SHAP drivers |
-| `POST` | `/api/analyze/{id}` | run the war room, return the full result |
-| `GET` | `/api/analyze/{id}/stream` | **SSE** stream (node-level) |
-| `WS` | `/api/analyze/{id}/ws` | **WebSocket** stream (token-level) |
+| `WS` | `/api/analyze/{id}/ws` | **WebSocket** stream — runs the war room, streams tokens |
 | `GET` | `/api/logs` | retention/CRM action log |
 | `GET` | `/api/metrics` | model metrics + ROI |
-| `GET` | `/api/audit` · `/api/audit/{trace_id}` | audit trail |
 
-Two streaming transports are provided: **WebSocket** (token-level, primary) and **SSE** (node-level, fallback). See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the request sequence and DB schema.
+The war room runs over a single **WebSocket** endpoint (token-level streaming). See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the request sequence and DB schema.
 
 ---
 
 ## Tech stack
 
 **AI/ML:** LangGraph · LangChain · Groq (`llama-3.3-70b-versatile`) · Model Context Protocol (FastMCP) · ChromaDB · sentence-transformers (bi- + cross-encoder) · BM25 · XGBoost · SHAP · LangSmith
-**Backend:** FastAPI · WebSockets/SSE · SQLite (raw SQL, `sqlite3` + `asyncio.to_thread`)
+**Backend:** FastAPI · WebSockets · SQLite (raw SQL, `sqlite3` + `asyncio.to_thread`)
 **Frontend:** Next.js 16 · React 19 · TypeScript · Tailwind
 **Infra:** Docker Compose (3 services) · GitHub Actions → GHCR · ruff · pytest
 
@@ -191,16 +190,16 @@ Two streaming transports are provided: **WebSocket** (token-level, primary) and 
 ## Project structure
 
 ```
-api/          FastAPI app - routes, schemas, WebSocket + SSE streaming, guardrail/audit wiring
+api/          FastAPI app - routes, schemas, WebSocket streaming, guardrail wiring
 agents/       LangGraph war room - supervisor + agent1/2/3, MCP client, ReAct loop
 rag/          Hybrid retrieval - bm25, fusion (RRF), rerank (cross-encoder), retriever
 mcp_server/   FastMCP server - retention policy, competitor intel, data-backed CRM tools
-db/           Raw-SQL SQLite layer - customers, recommendations, crm, meta, audit (+ schema.sql)
+db/           Raw-SQL SQLite layer - customers, recommendations, crm, meta (+ schema.sql)
 guardrails/   PII masking, policy-ceiling, grounding, injection
-eval/         Offline LangSmith harness - dataset + evaluators
+eval/         Live LangSmith eval - war-room run as a churn-eval experiment (completeness / quality / guardrails)
 src/          ML - data loader, XGBoost training, SHAP explainability
 frontend/     Next.js dashboard + live-token war-room UI
-tests/        pytest suite (bm25, fusion, guardrails, db)
+tests/        pytest suite (api routes, websocket, mcp tools, supervisor, guardrails)
 docker/       Dockerfiles (api, mcp, frontend)
 .github/      CI - ruff + pytest + GHCR image builds
 ```
@@ -210,9 +209,12 @@ docker/       Dockerfiles (api, mcp, frontend)
 ## Testing & CI
 
 ```bash
-pytest          # unit suite (BM25, RRF, guardrails, SQLite round-trips)
+pip install -r requirements-test.txt   # light deps only (no ML stack)
+pytest          # unit suite: API routes, WebSocket, MCP tools, supervisor routing, guardrails
 ruff check .    # critical-error lint gate
 ```
+
+The unit suite covers the system surfaces without the heavy ML/LLM stack — it stubs the model/graph boundaries and mocks nothing it doesn't own, so it runs in seconds. The full model → RAG → MCP → agent path is integration-tested via Docker.
 
 CI (`.github/workflows/ci.yml`): **lint** (ruff) → **test** (pytest) → **images** (buildx builds all three Dockerfiles and pushes to **GHCR** on push, tagged `latest` + short SHA, with layer caching). PRs run lint + test only.
 

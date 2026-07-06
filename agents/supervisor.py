@@ -77,7 +77,7 @@ async def supervisor_node(state: WarRoomState) -> dict:
         nxt, why = "FINISH", "low risk"                # guard: risk-gate / cost guard
     elif len(path) >= MAX_STEPS:
         nxt, why = "FINISH", "max steps"               # guard: hard cap
-    elif not has_evidence:
+    elif not has_evidence: 
         nxt, why = "agent2", "gather evidence"         # deterministic: gather first
     elif not has_offer:
         if agent2_runs >= MAX_AGENT2_RUNS:

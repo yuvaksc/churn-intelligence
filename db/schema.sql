@@ -11,7 +11,7 @@ CREATE TABLE IF NOT EXISTS customers (
     contract         TEXT    NOT NULL,
     monthly_charges  REAL    NOT NULL,
     tenure_months    INTEGER NOT NULL,
-    internet_service TEXT    NOT NULL,
+    internet_service TEXT    NOT NULL, 
     services_count   INTEGER NOT NULL,
     high_risk_flag   INTEGER NOT NULL,
     true_label       INTEGER,               -- ground truth (nullable)
@@ -56,26 +56,3 @@ CREATE TABLE IF NOT EXISTS meta (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
-
--- Append-only audit trail: one row per war-room analysis (Step 5).
-CREATE TABLE IF NOT EXISTS audit_log (
-    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
-    trace_id            TEXT    NOT NULL,
-    customer_id         TEXT    NOT NULL,
-    customer_state      TEXT,
-    risk_label          TEXT,
-    risk_score          REAL,
-    agent_path          TEXT,   -- JSON: supervisor routing decisions
-    tools_used          TEXT,   -- JSON: MCP tools the LLM called
-    retrieved_profiles  TEXT,   -- JSON: similar-profile summaries + scores
-    churn_reasons_count INTEGER,
-    policy              TEXT,   -- JSON
-    retention_offer     TEXT,
-    crm_log_id          TEXT,
-    guardrails          TEXT,   -- JSON: output guardrail report
-    input_scan          TEXT,   -- JSON: input guardrail report
-    latency_ms          INTEGER,
-    created_at          TEXT    NOT NULL DEFAULT (datetime('now'))
-);
-CREATE INDEX IF NOT EXISTS idx_audit_trace    ON audit_log(trace_id);
-CREATE INDEX IF NOT EXISTS idx_audit_customer ON audit_log(customer_id);

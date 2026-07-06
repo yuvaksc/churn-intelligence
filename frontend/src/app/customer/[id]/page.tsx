@@ -3,20 +3,31 @@
 
 import { use, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, CheckCircle2 } from "lucide-react";
+import { ArrowLeft, CheckCircle2, ShieldCheck, ShieldAlert } from "lucide-react";
 import { getCustomer, streamAnalysisWS } from "@/lib/api";
 import type {
   CustomerDetail,
   Agent1Event,
   Agent2Event,
   Agent3Event,
+  InputScan,
 } from "@/lib/types";
 import { AgentCard } from "@/components/AgentCard";
 import type { AgentStatus } from "@/components/AgentCard";
 import { RiskBadge } from "@/components/RiskBadge";
 import { ShapChart } from "@/components/ShapChart";
 
-const CUSTOMER_STATES = ["DEFAULT", "LOYAL", "NEW", "ENTERPRISE"] as const;
+// The customer's US market — drives Agent 3's competitor-intel lookup
+// (must match the keys in mcp_server/competitors.py, else it falls back to DEFAULT).
+const CUSTOMER_STATES = [
+  "DEFAULT",
+  "California",
+  "New York",
+  "Texas",
+  "Florida",
+  "Illinois",
+  "Washington",
+] as const;
 
 export default function WarRoomPage({
   params,
@@ -46,6 +57,7 @@ export default function WarRoomPage({
   const [running, setRunning] = useState(false);
   const [done, setDone] = useState(false);
   const [streamError, setStreamError] = useState<string | null>(null);
+  const [inputScan, setInputScan] = useState<InputScan | null>(null);
 
   const wsRef = useRef<WebSocket | null>(null);
 
@@ -65,6 +77,7 @@ export default function WarRoomPage({
     setA3Status("idle"); setA3Data(null); setA3Tok("");
     setDone(false);
     setStreamError(null);
+    setInputScan(null);
   }
 
   function runAnalysis() {
@@ -76,7 +89,7 @@ export default function WarRoomPage({
     wsRef.current = streamAnalysisWS(numericId, customerState, {
       onAgentStart(agent) {
         if (agent === "agent1") setA1Status("active");
-        if (agent === "agent2") setA2Status("active");
+        if (agent === "agent2") setA2Status("active"); 
         if (agent === "agent3") setA3Status("active");
       },
       onToken(agent, text) {
@@ -103,7 +116,8 @@ export default function WarRoomPage({
           setA3Status("complete");
         }
       },
-      onDone() {
+      onDone(d) {
+        setInputScan(d.input_scan ?? null);
         setDone(true);
         setRunning(false);
         // anything that didn't actually complete (low-risk skip, or an optimistic
@@ -190,21 +204,27 @@ export default function WarRoomPage({
 
       {/* Analysis controls */}
       <div className="flex items-center gap-4">
-        <select
-          value={customerState}
-          onChange={(e) => setCustomerState(e.target.value)}
-          disabled={running}
-          className="font-mono text-[13px] rounded-md px-3 py-1.5"
-          style={{
-            background: "var(--surface)",
-            border: "1px solid var(--border)",
-            color: "var(--text-dim)",
-          }}
-        >
-          {CUSTOMER_STATES.map((s) => (
-            <option key={s} value={s}>{s}</option>
-          ))}
-        </select>
+        <label className="flex items-center gap-2">
+          <span className="font-mono text-[11px] uppercase tracking-wider" style={{ color: "var(--text-faint)" }}>
+            Market
+          </span>
+          <select
+            value={customerState}
+            onChange={(e) => setCustomerState(e.target.value)}
+            disabled={running}
+            title="Customer's US market — used for competitor intelligence"
+            className="font-mono text-[13px] rounded-md px-3 py-1.5"
+            style={{
+              background: "var(--surface)",
+              border: "1px solid var(--border)",
+              color: "var(--text-dim)",
+            }}
+          >
+            {CUSTOMER_STATES.map((s) => (
+              <option key={s} value={s}>{s}</option>
+            ))}
+          </select>
+        </label>
 
         <button
           onClick={runAnalysis}
@@ -223,6 +243,21 @@ export default function WarRoomPage({
         {done && (
           <span className="flex items-center gap-1.5 font-mono text-[12px]" style={{ color: "var(--safe)" }}>
             <CheckCircle2 size={14} /> Analysis complete
+          </span>
+        )}
+
+        {done && inputScan && (
+          <span
+            className="flex items-center gap-1.5 font-mono text-[12px]"
+            style={{ color: inputScan.ok ? "var(--safe)" : "var(--risk)" }}
+            title={
+              inputScan.ok
+                ? "Input guardrail: no prompt-injection patterns in the customer data"
+                : `Input guardrail flagged: ${inputScan.matches.join(", ")}`
+            }
+          >
+            {inputScan.ok ? <ShieldCheck size={14} /> : <ShieldAlert size={14} />}
+            {inputScan.ok ? "Input clean" : "Suspicious input"}
           </span>
         )}
       </div>
@@ -330,22 +365,6 @@ export default function WarRoomPage({
                     </span>
                   ))}
                 </div>
-              )}
-              {Object.keys(a3Data.policy).length > 0 && (
-                <details className="group">
-                  <summary
-                    className="font-mono text-[11px] cursor-pointer select-none"
-                    style={{ color: "var(--text-faint)" }}
-                  >
-                    Policy details ▸
-                  </summary>
-                  <pre
-                    className="mt-2 text-[11px] font-mono p-3 rounded overflow-x-auto"
-                    style={{ background: "var(--surface-3)", color: "var(--text-dim)" }}
-                  >
-                    {JSON.stringify(a3Data.policy, null, 2)}
-                  </pre>
-                </details>
               )}
             </div>
           )}

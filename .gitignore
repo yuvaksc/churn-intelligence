@@ -11,18 +11,6 @@ data/app.db
 data/app.db-wal
 data/app.db-shm
 
-eval/__pycache__/
-eval/__init__.py
-
-agents/__pycache__/
-agents/tools/__pycache__/
-
-api/__pycache__/
-api/routes/__pycache__/
-
-db/__pycache__/
-
-guardrails/__pycache__/
-mcp_server/__pycache__/
-rag/__pycache__/
-tests/__pycache__/
+# Python bytecode (all packages)
+__pycache__/
+*.pyc

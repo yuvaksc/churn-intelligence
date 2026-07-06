@@ -1,0 +1,12 @@
+# Lightweight deps for the CI test suite.
+#
+# Enough to exercise the API routes, WebSocket, MCP tool logic, agent supervisor
+# and guardrails WITHOUT the heavy ML stack (torch / xgboost / shap / chromadb /
+# sentence-transformers). Those layers are integration-tested via Docker, so CI
+# stays fast and the unit suite runs in seconds.
+pytest>=8.0
+httpx>=0.28          # FastAPI TestClient transport
+fastapi>=0.115       # api route tests
+langgraph>=1.2       # agents.state / agents.supervisor imports
+pydantic>=2.0
+python-dotenv>=1.0   # agents.llm_config calls load_dotenv() at import

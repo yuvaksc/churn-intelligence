@@ -96,7 +96,7 @@ async def list_tool_specs(session: ClientSession) -> list[dict]:
     OpenAI-format function specs for llm.bind_tools(). The LLM then decides which
     to call at runtime.
     """
-    result = await session.list_tools()
+    result = await session.list_tools() 
     specs: list[dict] = []
     for t in result.tools:
         specs.append({
@@ -108,76 +108,3 @@ async def list_tool_specs(session: ClientSession) -> list[dict]:
             },
         })
     return specs
-
-
-async def _run_mcp_tool(tool_name: str, arguments: dict[str, Any]) -> str:
-    """
-    Open a fresh session, make one call, close.
-    Used by the @tool wrappers for single standalone calls.
-    """
-    async with mcp_session() as session:
-        return await _call(session, tool_name, arguments)
-
-
-def _sync(coro) -> str:
-    """
-    Run an async coroutine from sync context.
-    Handles both 'no loop' and 'loop already running' cases.
-    """
-    try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            # Inside an existing event loop (e.g. Jupyter, some test runners)
-            import concurrent.futures
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                future = pool.submit(asyncio.run, coro)
-                return future.result()
-        return loop.run_until_complete(coro)
-    except RuntimeError:
-        return asyncio.run(coro)
-
-
-# ── LangChain @tool wrappers (sync, backward compatible) ─────────────────────
-
-@tool
-def retention_policy_check(contract_type: str, monthly_charge: float) -> str:
-    """
-    Returns the retention discount policy for a customer based on their
-    contract type and monthly charge. Always call before drafting an offer.
-    """
-    return _sync(_run_mcp_tool("retention_policy_check", {
-        "contract_type":  contract_type,
-        "monthly_charge": monthly_charge,
-    }))
-
-
-@tool
-def get_competitor_insights(state: str = "DEFAULT", internet_service: str = "") -> str:
-    """
-    Returns competitor intelligence for a US state to frame the retention offer.
-    """
-    return _sync(_run_mcp_tool("get_competitor_insights", {
-        "state":            state,
-        "internet_service": internet_service,
-    }))
-
-
-@tool
-def log_retention_action(
-    customer_id:    str,
-    risk_score:     float,
-    offer_text:     str,
-    contract_type:  str,
-    monthly_charge: float,
-) -> str:
-    """Logs a retention action to the CRM queue. Call as the final step."""
-    return _sync(_run_mcp_tool("log_retention_action", {
-        "customer_id":    customer_id,
-        "risk_score":     risk_score,
-        "offer_text":     offer_text,
-        "contract_type":  contract_type,
-        "monthly_charge": monthly_charge,
-    }))
-
-
-ALL_MCP_TOOLS = [retention_policy_check, get_competitor_insights, log_retention_action]
