@@ -51,6 +51,17 @@ phases:
       - "printf 'version: 0.0\\nResources:\\n  - ChurnWarroom:\\n      Type: AWS::Lambda::Function\\n      Properties:\\n        Name: churn-warroom\\n        Alias: prod\\n        CurrentVersion: %s\\n        TargetVersion: %s\\n' $WARROOM_CURRENT $WARROOM_NEW > appspec-warroom.yml"
       - "printf 'version: 0.0\\nResources:\\n  - ChurnMcp:\\n      Type: AWS::Lambda::Function\\n      Properties:\\n        Name: churn-mcp-tools\\n        Alias: prod\\n        CurrentVersion: %s\\n        TargetVersion: %s\\n' $MCP_CURRENT $MCP_NEW > appspec-mcp.yml"
       - cp appspec-inference.yml appspec.yml
+      # Warroom is served by a Function URL on its prod alias, so its canary is
+      # triggered here (the pipeline Deploy stage only handles inference).
+      # CodeDeploy shifts the alias WARROOM_CURRENT -> WARROOM_NEW via
+      # churn-warroom-dg. Fire-and-forget (no wait) to keep build minutes down.
+      - echo Triggering CodeDeploy canary for churn-warroom prod alias...
+      - >-
+        aws deploy create-deployment
+        --application-name churn-deploy
+        --deployment-group-name churn-warroom-dg
+        --revision "$(jq -n --rawfile spec appspec-warroom.yml '{revisionType:"AppSpecContent",appSpecContent:{content:$spec}}')"
+        --region $AWS_DEFAULT_REGION
 
 artifacts:
   files:
