@@ -91,9 +91,21 @@ export interface MetricsResponse {
   true_negatives: number;
   interventions_fired: number;
   actual_churners: number;
-  revenue_at_risk_caught_monthly: number;
-  revenue_missed_monthly: number;
-  false_positive_spend_monthly: number;
+
+  // Modeled, one-time LTV-basis values
+  expected_ltv_saved: number;
+  expected_ltv_missed: number;
+  campaign_cost: number;
+  false_positive_waste: number;
+  net_value: number;
+  return_ratio: number;
+  assumptions: {
+    retention_success_rate: number;
+    ltv_months: number;
+    discount_credit_usd: number;
+    discount_pct: number;
+    discount_months: number;
+  };
 }
 
 export interface HealthResponse {

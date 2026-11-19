@@ -6,6 +6,9 @@ import { getMetrics } from "@/lib/api";
 import type { MetricsResponse } from "@/lib/types";
 import { MetricsCard } from "@/components/MetricsCard";
 
+const usd = (n: number) => `$${Math.round(n).toLocaleString("en-US")}`;
+const pct = (n: number) => `${Math.round(n * 100)}%`;
+
 export default function MetricsPage() {
   const [metrics, setMetrics] = useState<MetricsResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -130,29 +133,58 @@ export default function MetricsPage() {
             </div>
           </div>
 
-          {/* Revenue impact */}
+          {/* Modeled business impact (one-time, LTV basis) */}
           <div>
-            <SectionLabel>Monthly Revenue Impact</SectionLabel>
+            <SectionLabel>Modeled Business Impact (one-time, LTV basis)</SectionLabel>
             <div className="grid grid-cols-3 gap-4">
               <MetricsCard
-                label="Revenue Caught"
-                value={`$${metrics.revenue_at_risk_caught_monthly.toFixed(0)}`}
+                label="Expected LTV Saved"
+                value={usd(metrics.expected_ltv_saved)}
                 accent="var(--safe)"
-                subtitle="At-risk MRR intercepted"
+                subtitle="Lifetime value retained from caught churners"
               />
               <MetricsCard
-                label="Revenue Missed"
-                value={`$${metrics.revenue_missed_monthly.toFixed(0)}`}
+                label="Expected LTV Missed"
+                value={usd(metrics.expected_ltv_missed)}
                 accent="var(--risk)"
-                subtitle="Churners we didn't catch"
+                subtitle="Same basis, for churners we didn't catch"
               />
               <MetricsCard
-                label="False Positive Spend"
-                value={`$${metrics.false_positive_spend_monthly.toFixed(0)}`}
+                label="Campaign Cost"
+                value={usd(metrics.campaign_cost)}
                 accent="var(--warn)"
-                subtitle="Offers sent to non-churners"
+                subtitle="Credits + discounts on every offer sent"
+              />
+              <MetricsCard
+                label="Net Value"
+                value={usd(metrics.net_value)}
+                accent="var(--safe)"
+                subtitle="LTV saved minus campaign cost"
+              />
+              <MetricsCard
+                label="Return Ratio"
+                value={`${metrics.return_ratio.toFixed(1)} : 1`}
+                accent="var(--info)"
+                subtitle="Expected value per $1 of offers"
+              />
+              <MetricsCard
+                label="False Positive Waste"
+                value={usd(metrics.false_positive_waste)}
+                accent="var(--warn)"
+                subtitle="Offers sent to customers who would have stayed"
               />
             </div>
+            <p
+              className="mt-3 font-mono text-[11px]"
+              style={{ color: "var(--text-faint)" }}
+            >
+              Modeled estimates, not measured revenue. Assumes{" "}
+              {pct(metrics.assumptions.retention_success_rate)} save rate,{" "}
+              {metrics.assumptions.ltv_months}-month LTV,{" "}
+              {usd(metrics.assumptions.discount_credit_usd)} credit +{" "}
+              {pct(metrics.assumptions.discount_pct)} discount for{" "}
+              {metrics.assumptions.discount_months} months.
+            </p>
           </div>
         </div>
       )}

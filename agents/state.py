@@ -42,4 +42,4 @@ class WarRoomState(TypedDict):
     agent_path:       list     # ordered log of routing decisions (routing visibility)
 
     # ── LangGraph internals ───────────────────────────────────────────────────
-    messages: Annotated[list, add_messages]
+    # messages: Annotated[list, add_messages]

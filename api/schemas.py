@@ -56,22 +56,45 @@ class RetentionLogEntry(BaseModel):
 
 # ── Metrics endpoint ──────────────────────────────────────────────────────────
 
+# class MetricsResponse(BaseModel):
+#     threshold:                        float
+#     f1:                               float
+#     precision:                        float
+#     recall:                           float
+#     roc_auc:                          float
+#     avg_precision:                    float
+#     true_positives:                   int
+#     false_positives:                  int
+#     false_negatives:                  int
+#     true_negatives:                   int
+#     interventions_fired:              int
+#     actual_churners:                  int
+#     revenue_at_risk_caught_monthly:   float
+#     revenue_missed_monthly:           float
+#     false_positive_spend_monthly:     float
+
 class MetricsResponse(BaseModel):
-    threshold:                        float
-    f1:                               float
-    precision:                        float
-    recall:                           float
-    roc_auc:                          float
-    avg_precision:                    float
-    true_positives:                   int
-    false_positives:                  int
-    false_negatives:                  int
-    true_negatives:                   int
-    interventions_fired:              int
-    actual_churners:                  int
-    revenue_at_risk_caught_monthly:   float
-    revenue_missed_monthly:           float
-    false_positive_spend_monthly:     float
+    threshold:             float
+    f1:                    float
+    precision:             float
+    recall:                float
+    roc_auc:               float
+    avg_precision:         float
+    true_positives:        int
+    false_positives:       int
+    false_negatives:       int
+    true_negatives:        int
+    interventions_fired:   int
+    actual_churners:       int
+
+    # Modeled, one-time LTV-basis values (not monthly revenue)
+    expected_ltv_saved:    float
+    expected_ltv_missed:   float
+    campaign_cost:         float
+    false_positive_waste:  float
+    net_value:             float
+    return_ratio:          float
+    assumptions:           dict
 
 
 # ── Health endpoint ───────────────────────────────────────────────────────────
