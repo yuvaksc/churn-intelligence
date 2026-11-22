@@ -148,13 +148,43 @@ def _mean(a) -> float:
     return float(a.mean()) if len(a) else 0.0
 
 
+# Plain-numpy versions of the scikit-learn metrics (identical results; the serverless API
+# does not ship scikit-learn).
+
+def _ratio(num: float, den: float) -> float:
+    return float(num / den) if den else 0.0
+
+
+def _roc_auc(y_true, y_prob) -> float:
+    """Probability a random churner outranks a random non-churner (ties count half)."""
+    import numpy as np
+    n_pos = int(y_true.sum())
+    n_neg = len(y_true) - n_pos
+    if not n_pos or not n_neg:
+        return 0.0
+    _, inverse, counts = np.unique(y_prob, return_inverse=True, return_counts=True)
+    avg_rank = np.cumsum(counts) - (counts - 1) / 2          # 1-based, ties averaged
+    ranks = avg_rank[inverse]
+    return float((ranks[y_true == 1].sum() - n_pos * (n_pos + 1) / 2) / (n_pos * n_neg))
+
+
+def _average_precision(y_true, y_prob) -> float:
+    """Area under the precision-recall curve, step-wise (scikit-learn's definition)."""
+    import numpy as np
+    if not y_true.sum():
+        return 0.0
+    order = np.argsort(-y_prob, kind="mergesort")
+    y, s = y_true[order], y_prob[order]
+    cut = np.r_[np.where(np.diff(s))[0], len(y) - 1]         # last index of each score
+    tps = np.cumsum(y)[cut]
+    precision = tps / (cut + 1)
+    recall = tps / tps[-1]
+    return float(np.sum(np.diff(np.r_[0.0, recall]) * precision))
+
+
 def _compute_metrics(repo: CustomerRepository) -> MetricsResponse:
     """Compute classification metrics and LTV-basis business impact."""
     import numpy as np
-    from sklearn.metrics import (
-        f1_score, precision_score, recall_score,
-        roc_auc_score, average_precision_score, confusion_matrix,
-    )
 
     # Only labelled rows can be scored (uploaded customers have no ground truth yet).
     rows      = [r for r in repo.scoring_rows() if r.get("true_label") is not None]
@@ -165,8 +195,10 @@ def _compute_metrics(repo: CustomerRepository) -> MetricsResponse:
     monthly = np.array([r["monthly_charges"] for r in rows])
     y_pred  = (y_prob >= threshold).astype(int)
 
-    tn, fp, fn, tp = confusion_matrix(y_true, y_pred, labels=[0, 1]).ravel()
-    tp, fp, fn, tn = int(tp), int(fp), int(fn), int(tn)
+    tp = int(((y_pred == 1) & (y_true == 1)).sum())
+    fp = int(((y_pred == 1) & (y_true == 0)).sum())
+    fn = int(((y_pred == 0) & (y_true == 1)).sum())
+    tn = int(((y_pred == 0) & (y_true == 0)).sum())
 
     tp_avg = _mean(monthly[(y_pred == 1) & (y_true == 1)])
     fp_avg = _mean(monthly[(y_pred == 1) & (y_true == 0)])
@@ -190,11 +222,11 @@ def _compute_metrics(repo: CustomerRepository) -> MetricsResponse:
 
     return MetricsResponse(
         threshold=round(float(threshold), 4),
-        f1=round(float(f1_score(y_true, y_pred, zero_division=0)), 4),
-        precision=round(float(precision_score(y_true, y_pred, zero_division=0)), 4),
-        recall=round(float(recall_score(y_true, y_pred, zero_division=0)), 4),
-        roc_auc=round(float(roc_auc_score(y_true, y_prob)), 4),
-        avg_precision=round(float(average_precision_score(y_true, y_prob)), 4),
+        f1=round(_ratio(2 * tp, 2 * tp + fp + fn), 4),
+        precision=round(_ratio(tp, tp + fp), 4),
+        recall=round(_ratio(tp, tp + fn), 4),
+        roc_auc=round(_roc_auc(y_true, y_prob), 4),
+        avg_precision=round(_average_precision(y_true, y_prob), 4),
         true_positives=tp,
         false_positives=fp,
         false_negatives=fn,

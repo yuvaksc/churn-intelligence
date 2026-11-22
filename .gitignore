@@ -2,6 +2,7 @@
 models/*
 !models/champion.joblib
 !models/champion.json
+!models/champion.onnx
 verify.py
 .claude
 

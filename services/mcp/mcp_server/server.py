@@ -18,7 +18,10 @@ import os
 import uuid
 from datetime import datetime
 
-from fastmcp import FastMCP
+try:
+    from fastmcp import FastMCP                 # local / Docker: full FastMCP (SSE server)
+except ImportError:                             # serverless: the MCP SDK's built-in FastMCP,
+    from mcp.server.fastmcp import FastMCP      # stdio only (keeps the function bundle small)
 from mcp_server.policies import get_policy
 from mcp_server.competitors import get_competitor_info, FEATURE_DICTIONARY
 from churn_data import db

@@ -4,6 +4,7 @@
                                registers a new version of `churn-xgb`, alias @challenger
     compare(result)         → re-scores the current @champion on the SAME test split
     promote(version)        → moves @champion, exports models/champion.joblib for serving
+                               (local / Docker) and models/champion.onnx (Vercel)
 
 Promotion rule: the challenger must match or beat the champion's test ROC-AUC and
 must not worsen the Brier score by more than BRIER_TOLERANCE (calibration guard).
@@ -118,4 +119,52 @@ def export_bundle(model, threshold: float, version: str, metrics: dict | None = 
     (BUNDLE_PATH.parent / "champion.json").write_text(
         json.dumps({"version": version, "threshold": threshold, "metrics": metrics or {}}, indent=2),
         encoding="utf-8")
+    export_onnx(model, threshold, version)
     return BUNDLE_PATH
+
+
+def onnx_spec(model) -> dict:
+    """Everything the fitted pipeline learned outside the XGBoost trees: the feature
+    engineering medians, the encoders' categories and the isotonic calibration curve.
+    churn_ml.predictor.OnnxPredictor applies them with plain Python + numpy."""
+    from churn_ml.model import CATEGORICAL, NUMERIC
+
+    cal = model.calibrated_classifiers_[0]
+    prep = cal.estimator.named_steps["prep"]
+    feats, enc = prep.named_steps["features"], prep.named_steps["encode"]
+    onehot = enc.named_transformers_["categorical"]
+    drop = onehot.drop_idx_ if onehot.drop_idx_ is not None else [None] * len(CATEGORICAL)
+    iso = cal.calibrators[0]
+    return {
+        "median_charge": feats.median_charge_,
+        "bundle_medians": feats.bundle_medians_,
+        "contract": [str(c) for c in enc.named_transformers_["contract"].categories_[0]],
+        "onehot": [[col, [str(c) for j, c in enumerate(cats) if j != drop[i]]]
+                   for i, (col, cats) in enumerate(zip(CATEGORICAL, onehot.categories_))],
+        "numeric": NUMERIC,
+        "isotonic_x": [float(x) for x in iso.X_thresholds_],
+        "isotonic_y": [float(y) for y in iso.y_thresholds_],
+    }
+
+
+ONNX_PATH = BUNDLE_PATH.with_suffix(".onnx")
+
+
+def export_onnx(model, threshold: float, version: str) -> Path:
+    """models/champion.onnx: the XGBoost trees as an ONNX graph (onnxmltools), with the
+    preprocessing + calibration spec, threshold and version in its metadata. Lets the
+    serverless API score live with onnxruntime + numpy, no scikit-learn/scipy/pandas."""
+    from onnxmltools import convert_xgboost
+    from onnxmltools.convert.common.data_types import FloatTensorType
+
+    spec = onnx_spec(model)
+    n_features = 1 + sum(len(kept) for _, kept in spec["onehot"]) + len(spec["numeric"])
+    clf = model.calibrated_classifiers_[0].estimator.named_steps["clf"]
+    onx = convert_xgboost(clf, initial_types=[("input", FloatTensorType([None, n_features]))],
+                          target_opset=15)
+    for key, value in {"churn_spec": json.dumps(spec), "threshold": str(threshold),
+                       "version": version}.items():
+        prop = onx.metadata_props.add()
+        prop.key, prop.value = key, value
+    ONNX_PATH.write_bytes(onx.SerializeToString())
+    return ONNX_PATH

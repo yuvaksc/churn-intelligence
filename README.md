@@ -83,9 +83,9 @@ telco data → 60/20/20 stratified split
 | `model.py` | the sklearn Pipeline, used for training and serving |
 | `training.py` | splits, baseline vs tuned XGBoost, calibration, threshold |
 | `economics.py` | the retention economics behind the threshold (also used by `/api/metrics`) |
-| `registry.py` | MLflow tracking + registry, champion / challenger, export `champion.joblib` |
+| `registry.py` | MLflow tracking + registry, champion / challenger, export `champion.joblib` + `champion.onnx` |
 | `retrain.py` | one command: train → register → compare → promote |
-| `predictor.py` | the `Predictor` interface + the loader of `champion.joblib` used by Agent 1 |
+| `predictor.py` | the `Predictor` interface used by Agent 1: `champion.joblib` (scikit-learn) locally, `champion.onnx` (ONNX Runtime) on Vercel |
 | `scoring.py` | scores every customer + SHAP drivers into Postgres (`--seed` loads the customers first) |
 
 * **No train/serve skew.** Preprocessing lives inside the pipeline and is saved with it; serving
@@ -243,13 +243,20 @@ Or run everything in containers: `docker compose up -d --build` (see the header 
    (port 5432, for loading data from your machine) and the **Transaction pooler** URI (port
    6543, for Vercel).
 2. **Data:** with `DATABASE_URL` set to the session pooler URI, run `churn_ml.scoring --seed` and
-   `churn_rag.pg_index` once from your machine. `models/champion.joblib` is the only tracked
+   `churn_rag.pg_index` once from your machine. `models/champion.joblib` and `models/champion.onnx` are the only tracked
    model file and ships with the deploy.
 3. **Vercel:** import the repo (root directory: the repo root). `vercel.json` defines two
    services (`web` → `apps/web`, `api` → `services/api/vercel_entry.py`) behind one domain, so
    the web app calls the API same-origin. Set `DATABASE_URL` (transaction pooler), `GROQ_API_KEY`,
-   `EMBEDDER=fastembed` (ONNX instead of torch, keeps the Python bundle small; same results),
    and optionally the `LANGSMITH_*` variables.
+
+   A Vercel function may hold ~225 MB, so the deployed API (`requirements-serve.txt`) is
+   slimmer than local: everything runs on ONNX Runtime. The churn model is exported to
+   `models/champion.onnx` on every promotion (`MODEL_FORMAT=onnx`; same features, scores
+   within 2e-5 of scikit-learn, identical HIGH/LOW labels, checked by a unit test), and the
+   RAG models run on fastembed (`EMBEDDER=fastembed`) instead of torch, with identical
+   retrieval results. `services/api/vercel_entry.py` sets both; locally and in Docker the
+   scikit-learn and torch versions run.
 4. **CI/CD:** add the secrets listed at the top of `.github/workflows/deploy.yml`; merges to `main`
    then apply migrations, deploy, and run `scripts/smoke_test.py` against the live URL.
 

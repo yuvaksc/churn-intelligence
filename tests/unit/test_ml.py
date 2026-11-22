@@ -82,3 +82,27 @@ def test_predictor_scores_sparse_records(predictor):
     out = pred.predict({"Contract": "Month-to-month", "Monthly Charges": 90, "Tenure Months": 2,
                         "Internet Service": "Fiber optic"})
     assert 0.0 <= out["risk_score"] <= 1.0
+
+
+# ── ONNX export: the Vercel model must score exactly like the scikit-learn champion ──
+def test_champion_onnx_matches_the_sklearn_champion():
+    pytest.importorskip("xgboost")
+    pytest.importorskip("onnxruntime")
+    import joblib
+
+    from churn_ml.model import to_frame
+    from churn_ml.predictor import BUNDLE_PATH, ONNX_PATH, OnnxPredictor
+    bundle = joblib.load(BUNDLE_PATH)
+    ref = PipelinePredictor(bundle["model"], bundle["threshold"], bundle["version"])
+    onx = OnnxPredictor(ONNX_PATH)
+    assert (onx.model_version, onx.threshold) == (ref.model_version, ref.threshold), \
+        "champion.onnx is stale: re-export it (churn_ml.registry.export_onnx)"
+
+    rows = clean(load_raw())[RAW_FEATURES].iloc[::7].to_dict("records")
+    rows += [{}, {"Contract": "Weekly", "Monthly Charges": "abc", "Internet Service": "Satellite"}]
+    prep = bundle["model"].calibrated_classifiers_[0].estimator.named_steps["prep"]
+    np.testing.assert_array_equal(prep.transform(to_frame(rows)).astype(np.float32),
+                                  np.asarray([onx.features(r) for r in rows], dtype=np.float32))
+    p_ref, p_onx = ref.predict_proba(rows), onx.predict_proba(rows)
+    assert np.abs(p_ref - p_onx).max() < 1e-4
+    assert ((p_ref >= ref.threshold) == (p_onx >= ref.threshold)).all()

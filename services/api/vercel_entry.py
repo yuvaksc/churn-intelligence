@@ -5,8 +5,14 @@ The API imports the shared libraries in packages/* and spawns the MCP server
 module puts those package roots on sys.path before importing the app.
 """
 
+import os
 import sys
 from pathlib import Path
+
+# Serverless defaults (a Vercel function may hold ~225 MB): the churn model and the RAG
+# models all run on ONNX Runtime, so no scikit-learn/scipy/pandas/xgboost and no torch.
+os.environ.setdefault("MODEL_FORMAT", "onnx")
+os.environ.setdefault("EMBEDDER", "fastembed")
 
 _ROOT = Path(__file__).resolve().parents[2]
 for rel in ("packages/data", "packages/ml", "packages/rag", "packages/agents",
