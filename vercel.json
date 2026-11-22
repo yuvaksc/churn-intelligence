@@ -6,7 +6,7 @@
     },
     "api": {
       "root": "./",
-      "entrypoint": "services/api/vercel_entry.py:app",
+      "entrypoint": "services.api.vercel_entry:app",
       "installCommand": "pip install -r requirements-serve.txt",
       "functions": {
         "services/api/vercel_entry.py": {
