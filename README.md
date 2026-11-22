@@ -55,7 +55,7 @@ packages/
   evals/churn_evals/        evaluators + per-analysis LangSmith experiments
 supabase/migrations/        the database schema (applied by Supabase and by docker compose)
 tests/unit · tests/integration
-.github/workflows/          ci · deploy · retrain
+.github/workflows/          ci · deploy
 ```
 
 Each package is importable as `churn_*`. Agents and routes depend on **interfaces**
@@ -93,7 +93,8 @@ telco data → 60/20/20 stratified split
 * **Calibrate, then threshold.** Contacting a customer is worth it when
   `p · save-rate · monthly · LTV > offer cost`. That only works if `p` is a real probability.
 * **SHAP in batch, not per request.** The API serves a precomputed explanation.
-* `python -m churn_ml.retrain` trains, compares and promotes; the `retrain` workflow runs it weekly.
+* `python -m churn_ml.retrain` trains, compares and promotes. Retraining is manual and local
+  (see [Retraining](#retraining-manual)): the MLflow registry lives on that machine.
 
 ### RAG (`packages/rag`)
 
@@ -263,6 +264,22 @@ Or run everything in containers: `docker compose up -d --build` (see the header 
 The public demo has no login, so `/api/analyze` is rate-limited per IP (`ANALYSIS_LIMIT_PER_HOUR`,
 default 20) to protect the LLM budget.
 
+### Retraining (manual)
+
+When there is new data or a better model, retrain on your machine; the MLflow registry
+(`mlruns/`) keeps the champion history there.
+
+1. `python -m churn_ml.retrain`: trains a challenger, compares it with the current champion
+   on the same held-out data, and promotes it only if it wins. Promotion writes
+   `models/champion.joblib` and `models/champion.onnx`.
+2. Commit and push both files. Vercel redeploys and serves the new `champion.onnx`
+   (the ONNX equivalence test in CI checks the two files match).
+3. With `DATABASE_URL` set to the Supabase session pooler URI, run
+   `python -m churn_ml.scoring`: re-scores every customer, recomputes the SHAP drivers and
+   updates the model version in the database, so the dashboard and metrics reflect it.
+
+If the challenger loses, nothing changes and there is nothing to deploy.
+
 ## Testing and CI
 
 ```bash
@@ -276,7 +293,6 @@ TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:54329/postgres pytest
 |---|---|---|
 | `ci.yml` | every PR / push | ruff + mypy → unit tests (coverage floor) → integration tests on pgvector Postgres → web typecheck + build → Docker builds (GHCR on push) → Vercel preview (PRs) |
 | `deploy.yml` | merge to `main` | `supabase db push` → Vercel production → smoke test |
-| `retrain.yml` | weekly / manual | train → challenger vs champion → promote → re-score customers |
 
 What the tests cover: the war-room graph on fakes (low-risk customers skip agents 2 and 3; the
 policy tool runs before any offer; backstops), guardrails, prompt structure, threshold economics,

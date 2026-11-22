@@ -5,8 +5,9 @@
     python -m churn_ml.retrain --promote force    # first deploy / manual override
     python -m churn_ml.retrain --n-iter 10        # smaller search (CI smoke run)
 
-Writes models/reports/retrain_report.json (also uploaded by the retrain workflow)
-and, on promotion, models/champion.joblib for the API.
+Writes models/reports/retrain_report.json and, on promotion, models/champion.joblib
+(local / Docker) and models/champion.onnx (Vercel). Retraining is manual: after a
+promotion, commit both files and re-score the database with `python -m churn_ml.scoring`.
 """
 
 from __future__ import annotations
