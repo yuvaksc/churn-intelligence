@@ -5,6 +5,8 @@
 #     models/champion.onnx on ONNX Runtime (MODEL_FORMAT=onnx, churn_ml.predictor.OnnxPredictor)
 #   - torch: RAG models run on ONNX Runtime via fastembed (EMBEDDER=fastembed)
 #   - sympy/mpmath/hf-xet: declared by onnxruntime/huggingface_hub, unused at inference
+#   - zstandard (~23 MB): optional LangSmith trace compression; traces upload uncompressed
+#   - cryptography/cffi/pycparser: only the MCP client's OAuth extensions use them
 #   - fastmcp: the stdio MCP server falls back to the mcp SDK's built-in FastMCP
 # Versions match the local environment the app is tested with. Local dev and Docker use
 # requirements.txt / requirements_agents.txt / requirements_api.txt instead.
@@ -12,11 +14,9 @@ annotated-types==0.8.0
 anyio==4.16.0
 attrs==26.1.0
 certifi==2026.11.20
-cffi==2.1.1
 charset-normalizer==3.5.2
 click==8.5.1
 coloredlogs==15.0.1
-cryptography==50.0.2
 distro==1.9.0
 fastapi==0.115.9
 fastembed==0.9.1
@@ -58,7 +58,6 @@ protobuf==7.36.2
 psycopg==3.2.9
 psycopg-binary==3.2.9
 py_rust_stemmers==0.1.8
-pycparser==3.12
 pydantic==2.13.4
 pydantic_core==2.46.4
 pydantic-settings==2.16.3
@@ -84,4 +83,3 @@ uuid_utils==0.19.0
 uvicorn==0.48.0
 websockets==15.0.1
 xxhash==4.1.0
-zstandard==0.25.0
