@@ -1,5 +1,7 @@
 name: CI
 
+# Every PR and push: lint + types → unit tests (coverage) → integration tests against
+# Postgres+pgvector → web typecheck/build → Docker builds → Vercel preview (PRs).
 on:
   push:
     branches: ["**"]
@@ -8,40 +10,108 @@ on:
 permissions:
   contents: read
   packages: write
+  pull-requests: write
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.12"
 
 jobs:
   lint:
-    name: Lint (ruff)
+    name: Lint + types
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
-      - run: pip install ruff
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+      - run: pip install ruff mypy -r requirements-test.txt
       - run: ruff check .
+      - name: mypy (typed core modules)
+        run: >
+          mypy packages/data/churn_data
+          packages/ml/churn_ml/economics.py packages/ml/churn_ml/predictor.py packages/ml/churn_ml/model.py
+          packages/rag/churn_rag/ports.py packages/rag/churn_rag/pg_retriever.py packages/rag/churn_rag/documents.py
+          packages/agents/churn_agents/deps.py packages/agents/churn_agents/tools/gateway.py
+          packages/agents/churn_agents/prompts.py packages/agents/churn_agents/guardrails
+          packages/evals/churn_evals/evaluators.py packages/evals/churn_evals/live.py
+          services/api/api/deps.py services/api/api/ratelimit.py services/api/api/routes
 
-  test:
-    name: Tests (pytest)
+  unit:
+    name: Unit tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
-      - run: pip install -r requirements-test.txt   # light deps only — no ML stack
-      - run: python -m pytest
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+      - run: pip install -r requirements-test.txt
+      - name: pytest (unit, no network) with coverage floor
+        run: >
+          python -m pytest tests/unit
+          --cov --cov-report=term --cov-report=xml --cov-fail-under=60
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage.xml
+
+  integration:
+    name: Integration tests (Postgres + pgvector)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+      - run: pip install -r requirements-test.txt
+      # Applies supabase/migrations to a fresh pgvector Postgres, then tests the repositories,
+      # hybrid search (RRF + filters), A/B logging, and that Supabase's public roles see nothing.
+      - run: python -m pytest tests/integration
+
+  web:
+    name: Web (typecheck + build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+      - run: npm ci
+      - run: npx tsc --noEmit
+      - run: npm run build
+        env:
+          NEXT_PUBLIC_API_BASE: http://localhost:8000
 
   images:
-    name: Build & push images (GHCR)
-    needs: [lint, test]
-    if: github.event_name == 'push'      # build/push on branch pushes, not on PRs
+    name: Docker build${{ github.event_name == 'push' && ' + push (GHCR)' || '' }}
+    needs: [lint, unit, integration, web]
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         include:
-          - name: api 
+          - name: api
             dockerfile: docker/api.Dockerfile
           - name: mcp-server
             dockerfile: docker/mcp.Dockerfile
@@ -49,21 +119,18 @@ jobs:
             dockerfile: docker/frontend.Dockerfile
     steps:
       - uses: actions/checkout@v4
-
       - uses: docker/setup-buildx-action@v3
-
       - name: Compute lowercase image name
         id: img
         run: |
           echo "name=ghcr.io/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')-${{ matrix.name }}" >> "$GITHUB_OUTPUT"
-
       - name: Log in to GHCR
+        if: github.event_name == 'push'
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Docker metadata (tags + labels)
         id: meta
         uses: docker/metadata-action@v5
@@ -72,16 +139,41 @@ jobs:
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
             type=sha,format=short
-
-      - name: Build and push
+      - name: Build${{ github.event_name == 'push' && ' and push' || '' }}
         uses: docker/build-push-action@v6
         with:
           context: .
           file: ${{ matrix.dockerfile }}
-          push: true
+          push: ${{ github.event_name == 'push' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=${{ matrix.name }}
           cache-to: type=gha,mode=max,scope=${{ matrix.name }}
           build-args: |
             NEXT_PUBLIC_API_BASE=http://localhost:8000
+
+  preview:
+    name: Vercel preview
+    if: github.event_name == 'pull_request'
+    needs: [lint, unit, integration, web]
+    runs-on: ubuntu-latest
+    env:
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Skip when Vercel is not configured
+        id: cfg
+        run: echo "enabled=${{ env.VERCEL_TOKEN != '' }}" >> "$GITHUB_OUTPUT"
+      - if: steps.cfg.outputs.enabled == 'true'
+        run: npm i -g vercel@latest
+      - if: steps.cfg.outputs.enabled == 'true'
+        run: vercel pull --yes --environment=preview --token="$VERCEL_TOKEN"
+      - if: steps.cfg.outputs.enabled == 'true'
+        run: vercel build --token="$VERCEL_TOKEN"
+      - if: steps.cfg.outputs.enabled == 'true'
+        id: deploy
+        run: echo "url=$(vercel deploy --prebuilt --token="$VERCEL_TOKEN")" >> "$GITHUB_OUTPUT"
+      - if: steps.cfg.outputs.enabled == 'true'
+        run: echo "Preview: ${{ steps.deploy.outputs.url }}" >> "$GITHUB_STEP_SUMMARY"

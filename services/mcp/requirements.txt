@@ -1,0 +1,2 @@
+fastmcp==3.4.0            # 2.x breaks the MCP server and 4.x is untested; pin the tested version
+psycopg[binary]==3.2.9    # CRM reads from Postgres when DATABASE_URL is set

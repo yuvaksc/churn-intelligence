@@ -1,5 +1,7 @@
-# requirements_api.txt
-fastapi>=0.115.0
-uvicorn[standard]>=0.32.0
-pydantic>=2.0.0
-python-multipart>=0.0.12
+# requirements_api.txt — FastAPI service. Exact pins (see requirements.txt).
+fastapi==0.115.9
+uvicorn[standard]==0.48.0
+pydantic==2.13.4
+python-multipart==0.0.29
+psycopg[binary]==3.2.9      # Supabase Postgres (DATABASE_URL)
+websockets==15.0.1

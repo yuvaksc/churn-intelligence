@@ -1,12 +1,21 @@
-# Lightweight deps for the CI test suite.
+# Lightweight deps for the CI test suite (unit + Postgres integration).
 #
-# Enough to exercise the API routes, WebSocket, MCP tool logic, agent supervisor
-# and guardrails WITHOUT the heavy ML stack (torch / xgboost / shap / chromadb /
-# sentence-transformers). Those layers are integration-tested via Docker, so CI
-# stays fast and the unit suite runs in seconds.
+# Enough to exercise the API routes, WebSocket, auth, MCP tool logic, the agent
+# graph (with fakes), data pipeline, the sklearn model pipeline, experiments and
+# evals WITHOUT the heavy ML stack (torch / xgboost / shap / chromadb /
+# sentence-transformers). Model-specific paths are covered by the retrain workflow.
 pytest>=8.0
+pytest-cov>=5.0
 httpx>=0.28          # FastAPI TestClient transport
-fastapi>=0.115       # api route tests
-langgraph>=1.2       # agents.state / agents.supervisor imports
+fastapi>=0.115
+python-multipart>=0.0.12
+langgraph>=1.2
+langchain-core>=1.4
 pydantic>=2.0
-python-dotenv>=1.0   # agents.llm_config calls load_dotenv() at import
+python-dotenv>=1.0   # churn_agents.llm_config calls load_dotenv() at import
+psycopg[binary]>=3.2
+pandas==2.2.2
+numpy==1.26.4
+scipy>=1.13
+scikit-learn==1.5.2
+joblib==1.4.2

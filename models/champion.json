@@ -1,0 +1,18 @@
+{
+  "version": "churn-xgb:v2",
+  "threshold": 0.13,
+  "metrics": {
+    "roc_auc": 0.8489,
+    "pr_auc": 0.6395,
+    "brier": 0.135,
+    "recall": 0.9358,
+    "precision": 0.4348,
+    "f1": 0.5937,
+    "flagged_rate": 0.5713,
+    "net_value_usd": 134690.77,
+    "threshold": 0.13,
+    "brier_uncalibrated": 0.1592,
+    "roc_auc_uncalibrated": 0.8535,
+    "cv_roc_auc": 0.8632
+  }
+}

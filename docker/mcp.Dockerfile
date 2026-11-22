@@ -8,11 +8,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Install dependencies before copying code (layer-cache friendly)
-COPY mcp_server/requirements.txt ./mcp_requirements.txt
+COPY services/mcp/requirements.txt ./mcp_requirements.txt
 RUN pip install --no-cache-dir -r mcp_requirements.txt
 
-COPY mcp_server/ ./mcp_server/
-COPY db/          ./db/
+# churn_data.db provides the read-only CRM queries behind the data-backed tools
+COPY services/mcp/   ./services/mcp/
+COPY packages/data/  ./packages/data/
 
 # Pre-create the log directory so the bind mount lands correctly and
 # log_retention_action() can write without a mkdir race on first call
@@ -21,7 +22,7 @@ RUN mkdir -p /app/models/reports
 ENV MCP_TRANSPORT=sse
 ENV MCP_PORT=8001
 ENV MCP_HOST=0.0.0.0
-ENV PYTHONPATH=/app
+ENV PYTHONPATH=/app/packages/data:/app/services/mcp
 
 EXPOSE 8001
 

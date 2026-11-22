@@ -1,0 +1,26 @@
+# pre-commit install   → runs on every commit (same checks CI runs first)
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.0
+    hooks:
+      - id: ruff
+        args: [--fix]
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: check-yaml
+      - id: check-json
+      - id: end-of-file-fixer
+        exclude: ^(apps/web/package-lock\.json|data/)
+      - id: check-added-large-files
+        args: [--maxkb=2048]
+        exclude: ^data/raw/
+      - id: detect-private-key
+  - repo: local
+    hooks:
+      - id: unit-tests
+        name: unit tests (fast, no network)
+        entry: python -m pytest tests/unit -q -x
+        language: system
+        pass_filenames: false
+        types: [python]

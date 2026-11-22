@@ -1,225 +1,289 @@
 # Churn Intelligence — Multi-Agent Retention Platform
 
-An **enterprise-style AI platform** that turns a telecom churn model into an analyst tool: it scores a customer with **XGBoost + SHAP**, then runs a **LangGraph multi-agent "war room"** — diagnose → gather evidence (hybrid RAG) → draft a policy-safe retention offer (a ReAct agent that discovers and calls **MCP tools**) — streaming every agent's reasoning **token-by-token over WebSockets**. Every run is **traced (LangSmith)** and **guard-railed**.
+A telecom churn model turned into an analyst tool. A **calibrated XGBoost** model scores each
+customer; for high-risk customers a **LangGraph multi-agent "war room"** diagnoses the risk,
+gathers evidence from similar past churners (**hybrid RAG on pgvector**), and drafts a
+policy-safe retention offer (a **ReAct agent calling MCP tools**), streaming each agent's
+reasoning to the UI over **WebSockets**. Every stage is measured: model metrics with a
+baseline, and every analysis traced in LangSmith and recorded as experiments scored on
+retrieval metrics, guardrail checks and LLM-as-judge quality.
 
-> Groq-only LLMs · SQLite (raw SQL) · ChromaDB + BM25 + cross-encoder rerank · single enriched MCP server · FastAPI · Next.js · Docker Compose · GitHub Actions → GHCR.
+> FastAPI · LangGraph · Groq · MCP · Supabase Postgres + pgvector · MLflow · Next.js · Vercel · GitHub Actions
 
 [![CI](https://github.com/yuvaksc/churn-intelligence/actions/workflows/ci.yml/badge.svg)](https://github.com/yuvaksc/churn-intelligence/actions/workflows/ci.yml)
 
 ---
 
-## Highlights
-
-- **Dynamic multi-agent orchestration** — a LangGraph **supervisor** routes between specialists at runtime (not a hardcoded chain); low-risk customers are risk-gated out, the one genuine decision (evidence sufficiency) is made by an LLM, bounded so it can't loop.
-- **Agentic tool use over MCP** — Agent 3 is a **ReAct loop**: it *discovers* the MCP server's tools via `list_tools()`, binds them to the LLM, and the model decides which to call (retention policy, competitor intel, account history, open tickets, prior recommendations) before drafting an offer.
-- **Expert RAG** — hybrid retrieval (**dense ChromaDB + in-memory BM25 → Reciprocal Rank Fusion → cross-encoder rerank**) with lost-in-the-middle context packing and a cite-or-refuse prompt.
-- **Token-level streaming** — a WebSocket endpoint drives `astream_events` and pushes `agent_start` / `token` / `agent_complete` frames; the Next.js UI renders each agent's text live.
-- **Observability & safety** — **LangSmith** tracing where every run is recorded live as a `churn-eval` experiment scored by three metrics (output-completeness + an LLM-judge + guardrails), plus backend **guardrails** (PII masking, hard policy-ceiling checks, grounding, prompt-injection heuristics).
-- **Production hygiene** — raw-SQL SQLite persistence, a 3-service Docker Compose stack, a `pytest` suite, and CI (ruff + pytest + image builds to **GHCR**).
-
----
-
-## Architecture
+## How it works in one minute
 
 ```mermaid
 flowchart LR
-    U([Browser]) -->|HTTP + WebSocket| FE[Next.js frontend<br/>:3000]
-    FE -->|REST / WS| API[FastAPI api<br/>:8000]
-
-    API -->|SSE| MCP[FastMCP server<br/>:8001]
-    API --> XGB[(XGBoost + SHAP<br/>models/*.pkl)]
-    API --> CH[(ChromaDB<br/>dense vectors)]
-    API -->|single writer| DB[(SQLite app.db)]
-    MCP -->|read-only| DB
-
-    API -->|LLM calls| GROQ[[Groq llama-3.3-70b]]
-    API -.->|traces + evals| LS[[LangSmith]]
-
-    subgraph WR ["War Room - LangGraph"]
-      SUP{{Supervisor}} --> AG1[Agent 1 Diagnostic]
-      SUP --> AG2[Agent 2 Evidence]
-      SUP --> AG3[Agent 3 Mitigation]
-    end
-    API --- SUP
-    AG3 -->|discovers + calls tools| MCP
+    U([Browser]) -->|HTTP + WebSocket| WEB[apps/web<br/>Next.js]
+    WEB --> API[services/api<br/>FastAPI]
+    API --> G{{LangGraph war room}}
+    G -->|score| ML[(champion model<br/>calibrated XGBoost)]
+    G -->|evidence| PG[(Supabase Postgres<br/>pgvector + full-text)]
+    G -->|tools| MCP[services/mcp<br/>policy · competitors · CRM]
+    MCP --> PG
+    G -->|LLM| GROQ[[Groq gpt-oss-120b]]
+    API -.->|traces| LS[[LangSmith]]
 ```
 
-Three containers: **`frontend`** (Next.js), **`api`** (FastAPI + LangGraph + ML/RAG), **`mcp-server`** (FastMCP). The `api` is the **single writer** to SQLite; the MCP server reads it for its data-backed CRM tools.
+1. **Agent 1 · Diagnostic** scores the customer with the calibrated model and explains the top
+   SHAP drivers in plain language. LOW-risk customers stop here (no LLM cost).
+2. **Agent 2 · Evidence** retrieves similar historical churners and their documented reasons,
+   and writes a report where every claim cites a retrieved customer (`[train_1234]`).
+3. **Agent 3 · Mitigation** gathers context through MCP tools (discount policy, competitor offers,
+   account history, open tickets, prior offers) and drafts a HOOK / OFFER / URGENCY offer.
+4. **Guardrails** mask PII, enforce the policy's discount ceiling, check grounding and citations,
+   and scan inputs for prompt injection.
 
 ---
 
-## The War Room (multi-agent flow)
+## Repository layout
 
-The supervisor is the graph hub — it runs first and regains control after every specialist. Routing is deterministic where the pipeline is linear and LLM-driven at the one real decision point.
-
-```mermaid
-flowchart TD
-    START([POST / WS analyze]) --> SUP{{Supervisor}}
-    SUP -->|always first| A1[Agent 1 Diagnostic Lead<br/>XGBoost proba + SHAP drivers]
-    A1 --> SUP
-    SUP -->|LOW risk: gate| FIN([Finish])
-    SUP -->|HIGH: gather| A2[Agent 2 Evidence Researcher<br/>hybrid RAG + rerank]
-    A2 --> SUP
-    SUP -->|LLM: evidence sufficient?| A3[Agent 3 Mitigation Architect<br/>ReAct over MCP tools]
-    A3 --> SUP
-    SUP -->|offer ready| FIN
+```
+apps/web/                   Next.js dashboard + live-streaming war room UI
+services/api/               FastAPI: routes → interfaces (repositories, predictor, retriever)
+services/mcp/               MCP server: retention policy, competitor intel, CRM tools
+packages/
+  data/churn_data/          loader, feature engineering, Postgres repositories, CRM rules
+  ml/churn_ml/              pipeline, training + calibration, economics, MLflow registry,
+                            predictor (serving), scoring (batch SHAP + seeding)
+  rag/churn_rag/            corpus, embeddings, pgvector index, hybrid retriever, reranker
+  agents/churn_agents/      LangGraph graph, supervisor, 3 agents, prompts, guardrails, tools
+  evals/churn_evals/        evaluators + per-analysis LangSmith experiments
+supabase/migrations/        the database schema (applied by Supabase and by docker compose)
+tests/unit · tests/integration
+.github/workflows/          ci · deploy · retrain
 ```
 
-| Agent | Does | Tech |
+Each package is importable as `churn_*`. Agents and routes depend on **interfaces**
+(`Predictor`, `Retriever`, `CustomerRepository`, `ToolGateway`), never on concrete clients,
+which is why the entire war room runs on in-memory fakes in the unit tests.
+
+---
+
+## Module by module
+
+### ML and MLOps (`packages/ml`)
+
+```
+telco data → 60/20/20 stratified split
+  → one sklearn Pipeline: FeatureEngineer (medians learned at fit) → ColumnTransformer → model
+  → baseline: logistic regression   vs   XGBoost tuned with 5-fold stratified CV
+  → isotonic calibration (Brier score reported)
+  → decision threshold chosen from retention economics on calibrated probabilities
+  → MLflow: register as @challenger → promote to @champion only if it beats the champion
+  → scoring job: every customer's score + top-5 SHAP drivers → Postgres
+```
+
+| file | role |
+|---|---|
+| `model.py` | the sklearn Pipeline, used for training and serving |
+| `training.py` | splits, baseline vs tuned XGBoost, calibration, threshold |
+| `economics.py` | the retention economics behind the threshold (also used by `/api/metrics`) |
+| `registry.py` | MLflow tracking + registry, champion / challenger, export `champion.joblib` |
+| `retrain.py` | one command: train → register → compare → promote |
+| `predictor.py` | the `Predictor` interface + the loader of `champion.joblib` used by Agent 1 |
+| `scoring.py` | scores every customer + SHAP drivers into Postgres (`--seed` loads the customers first) |
+
+* **No train/serve skew.** Preprocessing lives inside the pipeline and is saved with it; serving
+  never re-implements encoding.
+* **Calibrate, then threshold.** Contacting a customer is worth it when
+  `p · save-rate · monthly · LTV > offer cost`. That only works if `p` is a real probability.
+* **SHAP in batch, not per request.** The API serves a precomputed explanation.
+* `python -m churn_ml.retrain` trains, compares and promotes; the `retrain` workflow runs it weekly.
+
+### RAG (`packages/rag`)
+
+* **Corpus:** one document per train-split customer; profiles are short, so they are **not chunked**.
+  Each carries metadata (churn reason and its category, contract, internet type, payment method,
+  tenure bucket, charge band). Test customers are never indexed.
+* **Retrieval:** a single Postgres function `hybrid_search` pre-filters on the customer's
+  contract and internet type, then fuses **three ranked lists with Reciprocal Rank Fusion**:
+  **dense** (pgvector cosine, HNSW), **sparse** (full-text keyword match) and **structured**
+  (nearest neighbours on tenure, monthly charge and payment method, the numbers text search
+  cannot tell apart). A **cross-encoder** reranks the fused list. The query is the customer's
+  profile only.
+* **Generation:** Agent 2 must cite `[doc_id]`s; a guardrail rejects any citation that was not retrieved.
+
+### Agents and prompts (`packages/agents`)
+
+All prompts live in `churn_agents/prompts.py` and share one structure: **ROLE → TASK →
+STEPS (chain of thought) → CONSTRAINTS → OUTPUT FORMAT → EXAMPLE**. Fixed instructions go in the
+system message; per-run data goes in the user message, so instructions and data never mix. The
+model works through the STEPS before answering but outputs only the final answer, because agent
+text streams to the UI. Agent 3 is token-budgeted: all tools requested in one turn, compact tool
+results, at most three rounds.
+
+### Data (`packages/data`, `supabase/`)
+
+Postgres with raw SQL (psycopg 3). Tables: `customers`, `predictions`, `recommendations`,
+`crm_tickets`, `meta`, `rag_documents`. Row-level
+security is enabled with no policies, so Supabase's public API cannot read anything; only the
+backend's direct connection can.
+
+---
+
+## Results
+
+All numbers come from the code in this repo; the commands reproduce them.
+
+### Model — held-out test set (1,409 customers)
+
+| | Logistic regression (baseline) | **XGBoost (tuned, calibrated)** |
 |---|---|---|
-| **1 · Diagnostic** | risk score + top SHAP drivers + a short LLM summary | XGBoost, SHAP, Groq |
-| **2 · Evidence** | retrieves similar historical churners with their documented reasons, writes a cited evidence report | Hybrid RAG (below) |
-| **3 · Mitigation** | dynamically calls MCP tools, drafts a within-policy offer, logs it | ReAct + MCP + Groq |
-| **Supervisor** | risk-gate + LLM routing (bounded, no loops) | LangGraph + Groq |
+| ROC-AUC | 0.845 | **0.849** |
+| PR-AUC | 0.611 | **0.640** |
+| Brier (uncalibrated → isotonic) | 0.164 → 0.139 | 0.159 → **0.135** |
+| Recall @ economic threshold | 0.963 | 0.936 |
+| Precision @ economic threshold | 0.412 | 0.435 |
+
+Both models share the pipeline and calibration, so the lift is the model's alone: a modest
+but real gain over a strong linear baseline. The threshold (0.13) maximises retention net value
+under the assumptions in `churn_ml/economics.py` (30% save rate, 24-month LTV, ~$62 per offer):
+offers are cheap relative to a saved customer, so flagging ~57% of the base is optimal.
+
+### Evaluation — every analysis is traced and scored in LangSmith
+
+**Tracing.** Each analysis is **one trace**, `war-room · customer <id>`, in the `churn` project
+(tagged with the prompt version). Its waterfall shows every step: supervisor → Agent 1
+(`churn_model.predict`, its LLM call) → Agent 2 (`hybrid_search` retriever span with the ranked
+documents, its LLM call) → Agent 3 (each MCP tool call as a `tool` span, each ReAct LLM call).
+
+**Experiments.** When the analysis finishes (after the UI has its answer),
+`churn_evals/live.py` records it as LangSmith experiments, scored by `churn_evals/evaluators.py`:
+
+| dataset | experiment | metrics |
+|---|---|---|
+| `churn-warroom` | `warroom-<customer>-prompt-<v>` (every analysis) | routing, policy tool before offer, guardrails, citations, **LLM-as-judge** quality (0–1) with reasoning |
+| `churn-rag-golden` | `rag-<customer>-prompt-<v>` (HIGH risk, where Agent 2 ran) | recall@k, precision@k, nDCG@k (k = 3, 5, 10), MRR, citation accuracy, **LLM-as-judge** faithfulness + answer relevance |
+
+Both datasets are small reference sets (8 examples each) that the experiments attach to; the
+same customer always lands on the same example, so **to compare prompt versions, bump
+`PROMPT_VERSION` in `prompts.py`, re-run the same customer, and compare the two experiments
+side by side**. The RAG relevance labels are computed for the analysed customer from document
+metadata: grade 2 = a churner with the same contract, internet type, tenure bucket, charge band
+and payment method; grade 1 = all but payment. The labels are strict (a 12-month customer is
+not "relevant" to an 11-month one), so compare scores between versions and configurations.
+
+**Retrieval: how the pipeline was fixed** (40 HIGH-risk customers; the last two columns are the
+average gap between the customer and its top 5 retrieved churners, which does not depend on the
+relevance labels at all):
+
+| configuration | nDCG@5 | P@5 | MRR | tenure gap | charge gap |
+|---|---|---|---|---|---|
+| before: query = LLM risk summary + profile; dense + full-text; cross-encoder | 0.10 | 0.16 | 0.33 | 17.2 mo | $14.6 |
+| query = profile only | 0.31 | 0.40 | 0.64 | 12.8 mo | $9.8 |
+| full-text only / dense only (profile query, no reranker) | 0.13 / 0.27 | 0.15 / 0.43 | 0.28 / 0.46 | 18.8 / 16.0 mo | $17.4 / $12.2 |
+| **+ structured signal, 3-way RRF, cross-encoder (shipped)** | **0.63** | **0.76** | **0.92** | **5.6 mo** | **$4.5** |
+| same without the cross-encoder | 0.65 | 0.63 | 0.87 | 6.2 mo | $6.6 |
+
+Two root causes. (1) Agent 2 searched with the LLM's prose risk summary prepended to the profile,
+so the prose dominated both the embedding and the keyword match; the offline evals had used the
+profile alone and never saw it. (2) Customer profiles are mostly numbers, and neither embeddings
+nor keyword search can tell "Tenure 1 months" from "Tenure 13 months": a 1-month, $71 customer
+was matched with 13-to-70-month, $95-110 churners. A structured nearest-neighbour signal fused
+with the text signals fixes that, and the cross-encoder still adds precision on top. Postgres
+full-text search is the weakest signal (it ranks without IDF, unlike BM25), so it carries little
+weight on its own but helps in the fusion. Caveat: the relevance labels use tenure and charge
+buckets, so the structured signal is partly aligned with the metric; the gap columns show the
+gain is real regardless.
+
+**Prompt v4 results** (development runs: 12 evidence reports, 8 full war rooms):
+faithfulness 0.83, answer relevance 1.00, citation accuracy 1.00; routing 8/8, policy tool
+before offer 5/5, guardrails 5/5, war-room quality 0.75. Both unfaithful reports misjudged a
+monthly-charge range at its edge (e.g. "matches" for a $57.45 customer when the range tops out
+at $57.15), which is the next prompt change to try.
+
+How the prompt got to v4 (each row one change, measured on the same 12 queries):
+
+| prompt version | faithfulness | relevance | what changed / what the eval showed |
+|---|---|---|---|
+| v0 original (unstructured) | 0.83 | 1.00 | baseline |
+| v1 structured (role, steps, constraints, format, example) | 0.67 | 0.75 | over-refused: "insufficient evidence" despite good evidence |
+| v2 | 0.67 | 0.92 | refusal only when nothing matches; exact ranges |
+| v3 | 0.83 | 0.83 | ranges computed in code; no "most common" when reasons tie |
+| v4 (judge sees the full prompt context) | 1.00 | 0.92 | judge fixed to see everything the generator saw |
+
+Two lessons the eval made visible: stricter refusal rules cause over-refusal, and LLMs should
+not do arithmetic the code can do. Caveats: small samples, and the judge is the same model as the
+generator (self-grading bias); spot-check its verdicts in a LangSmith annotation queue.
 
 ---
 
-## RAG pipeline (Agent 2)
+## Run it locally
 
-```mermaid
-flowchart LR
-    Q[Query<br/>risk summary + snapshot] --> D[Dense retrieval<br/>ChromaDB all-MiniLM-L6-v2]
-    Q --> S[Sparse retrieval<br/>in-memory BM25]
-    D --> F[Reciprocal Rank Fusion]
-    S --> F
-    F --> R[Cross-encoder rerank<br/>ms-marco-MiniLM-L-6-v2]
-    R --> P[Top-N + lost-in-the-middle packing]
-    P --> G[Groq -> cited evidence report]
-```
-
-One hybrid search over the `churn_profiles` collection, where each churner carries its **own documented churn reason** as metadata — read straight from the raw CSV by row index, **train split only** (the reason is dropped from the model's features to avoid target leakage, then re-attached to the RAG profile). Agent 2 retrieves similar past churners and frequency-ranks *their* reasons, so the evidence is provably from the customers shown. `query_similar_profiles` returns each result with `rerank_score` / `bm25_score`; BM25 is hand-rolled (no extra dependency) and the cross-encoder reuses `sentence-transformers`.
-
----
-
-## MCP + ReAct (Agent 3)
-
-```mermaid
-flowchart LR
-    A3[Agent 3] -->|list_tools| MCP[MCP server]
-    MCP -->|JSON schemas| A3
-    A3 -->|bind_tools| LLM[[Groq LLM]]
-    LLM --> DEC{tool call?}
-    DEC -->|yes| EX[Execute MCP tool<br/>policy, competitor, account,<br/>tickets, prior recommendations]
-    EX --> LLM
-    DEC -->|no| OFF[Draft HOOK / OFFER / URGENCY]
-    OFF --> BK[Backstops: ensure policy fetched + log to CRM]
-```
-
-The MCP server exposes retention-policy, competitor-intel and **data-backed CRM tools** (backed by SQLite: account history, open tickets, prior recommendations = "memory"). The LLM decides which to call; reliability backstops guarantee the policy fetch and the CRM log.
-
----
-
-## Observability & Safety
-
-- **LangSmith** — set `LANGSMITH_TRACING=true` and each war-room run is traced **as an experiment run on the `churn-eval` dataset** (visible under Datasets & Experiments): the actual execution *is* the experiment run, so it carries the full agent1/2/3 waterfall, per-node latency and token usage, linked to the golden of its risk label. Three feedback metrics are attached: `output_completeness` (did the run produce all the JSON elements the reference archetype has for its risk label), `warroom_quality` (a holistic **Groq LLM-judge** — an overall score plus the reasoning behind it), and `guardrails` (did the offer's PII / policy-ceiling / grounding checks all pass). The three golden customers are per-label **archetypes** of the expected output, not a per-customer answer key.
-- **Guardrails** — PII masking, a hard policy-ceiling check on the drafted discount, a grounding/citation check, and a prompt-injection heuristic; results ride along on the response.
-
----
-
-## Quickstart
-
-**Prerequisites:** Docker Desktop, a [Groq API key](https://console.groq.com), and the [IBM Telco Customer Churn](https://www.kaggle.com/datasets/blastchar/telco-customer-churn) CSV at `data/raw/telco.csv`.
+Prerequisites: Python 3.12, Node 22, Docker, a [Groq API key](https://console.groq.com) in `.env`
+(see `.env.example`).
 
 ```bash
-# 1. Train the model (XGBoost + SHAP -> models/)
-python run_pipeline.py
+pip install -r requirements.txt -r requirements_agents.txt -r requirements_api.txt
+docker compose up -d db                      # Postgres + pgvector on :5433, migrations applied
+export DATABASE_URL=postgresql://postgres:postgres@localhost:5433/churn
+export PYTHONPATH="packages/data:packages/ml:packages/rag:packages/agents:packages/evals"
 
-# 2. Configure secrets (KEY=VALUE lines only -- no comments; compose is strict)
-cat > .env <<'EOF'
-GROQ_API_KEY=your_groq_key
-LANGSMITH_TRACING=true
-LANGSMITH_ENDPOINT=https://api.smith.langchain.com
-LANGSMITH_API_KEY=your_langsmith_key
-LANGSMITH_PROJECT=churn
-EOF
+python -m churn_ml.retrain --promote force   # train, register in MLflow, export the champion
+python -m churn_ml.scoring --seed            # customers + scores + SHAP + CRM tickets
+python -m churn_rag.pg_index                 # embed + index the RAG corpus
 
-# 3. Launch the stack (the api seeds SQLite from the model on first boot)
-docker compose up -d --build
-
-# 4. Build the vector index INSIDE the container, so the ChromaDB that writes the
-#    store is the exact one that serves it. Building it elsewhere (e.g. locally)
-#    can leave a store the container can't open ("could not connect to tenant").
-docker compose exec api python rag/build_index.py
-
-# 5. Open the dashboard
-#    http://localhost:3000        (UI)
-#    http://localhost:8000/docs   (OpenAPI)
+python scripts/dev_api.py                    # API on :8000 (+ MCP server on :8001)
+cd apps/web && npm ci && npm run build && npx next start -p 3000
 ```
 
-Pick a **HIGH-risk** customer → **Run Analysis** → watch each agent stream its reasoning live.
-Each run appears as an experiment on the `churn-eval` dataset — full waterfall + `output_completeness` / `warroom_quality` / `guardrails` metrics.
+Open http://localhost:3000, pick a HIGH-risk customer, and click **Run Analysis**.
+Or run everything in containers: `docker compose up -d --build` (see the header of
+`docker-compose.yml` for the one-time train / seed / index commands).
 
----
+## Deploy (Supabase + Vercel)
 
-## Configuration
+1. **Supabase:** create a project and run the two files in `supabase/migrations/` (in order) in
+   the SQL Editor, or `npx supabase db push`. From **Connect**, copy the **Session pooler** URI
+   (port 5432, for loading data from your machine) and the **Transaction pooler** URI (port
+   6543, for Vercel).
+2. **Data:** with `DATABASE_URL` set to the session pooler URI, run `churn_ml.scoring --seed` and
+   `churn_rag.pg_index` once from your machine. `models/champion.joblib` is the only tracked
+   model file and ships with the deploy.
+3. **Vercel:** import the repo (root directory: the repo root). `vercel.json` defines two
+   services (`web` → `apps/web`, `api` → `services/api/vercel_entry.py`) behind one domain, so
+   the web app calls the API same-origin. Set `DATABASE_URL` (transaction pooler), `GROQ_API_KEY`,
+   `EMBEDDER=fastembed` (ONNX instead of torch, keeps the Python bundle small; same results),
+   and optionally the `LANGSMITH_*` variables.
+4. **CI/CD:** add the secrets listed at the top of `.github/workflows/deploy.yml`; merges to `main`
+   then apply migrations, deploy, and run `scripts/smoke_test.py` against the live URL.
 
-| Variable | Required | Purpose |
+The public demo has no login, so `/api/analyze` is rate-limited per IP (`ANALYSIS_LIMIT_PER_HOUR`,
+default 20) to protect the LLM budget.
+
+## Testing and CI
+
+```bash
+pip install -r requirements-test.txt
+pytest tests/unit                       # no network, no database: everything faked
+docker run -d -p 54329:5432 -e POSTGRES_PASSWORD=postgres pgvector/pgvector:pg16
+TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:54329/postgres pytest tests/integration
+```
+
+| Workflow | Trigger | What |
 |---|---|---|
-| `GROQ_API_KEY` | yes | Groq LLM (all agents, supervisor, judge) |
-| `LANGSMITH_TRACING` / `_ENDPOINT` / `_API_KEY` / `_PROJECT` | no | tracing + eval (off when unset) |
-| `APP_DB_PATH` | no | SQLite path (default `data/app.db`) |
-| `MCP_TRANSPORT` / `MCP_SERVER_URL` / `MCP_HOST` / `MCP_PORT` | (compose) | MCP transport (`sse` in Docker, `stdio` locally) |
-| `NEXT_PUBLIC_API_BASE` | (build arg) | frontend -> api base URL |
+| `ci.yml` | every PR / push | ruff + mypy → unit tests (coverage floor) → integration tests on pgvector Postgres → web typecheck + build → Docker builds (GHCR on push) → Vercel preview (PRs) |
+| `deploy.yml` | merge to `main` | `supabase db push` → Vercel production → smoke test |
+| `retrain.yml` | weekly / manual | train → challenger vs champion → promote → re-score customers |
 
----
+What the tests cover: the war-room graph on fakes (low-risk customers skip agents 2 and 3; the
+policy tool runs before any offer; backstops), guardrails, prompt structure, threshold economics,
+calibration-aware serving, the eval metrics, the REST and WebSocket routes, rate limiting, and
+on real Postgres: repositories, hybrid search with filters and the structured signal, and the
+RLS lockout of public roles.
 
-## API reference
+## API
 
 | Method | Path | Description |
 |---|---|---|
-| `GET` | `/health` | model + test-set + Chroma status |
+| `GET` | `/health` | status, customers, high-risk count, threshold, model version, RAG documents |
 | `GET` | `/api/customers` | risk-sorted list (`limit`, `offset`, `risk_only`) |
-| `GET` | `/api/customers/{id}` | full features + top SHAP drivers |
-| `WS` | `/api/analyze/{id}/ws` | **WebSocket** stream — runs the war room, streams tokens |
-| `GET` | `/api/logs` | retention/CRM action log |
-| `GET` | `/api/metrics` | model metrics + ROI |
-
-The war room runs over a single **WebSocket** endpoint (token-level streaming). See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the request sequence and DB schema.
-
----
-
-## Tech stack
-
-**AI/ML:** LangGraph · LangChain · Groq (`llama-3.3-70b-versatile`) · Model Context Protocol (FastMCP) · ChromaDB · sentence-transformers (bi- + cross-encoder) · BM25 · XGBoost · SHAP · LangSmith
-**Backend:** FastAPI · WebSockets · SQLite (raw SQL, `sqlite3` + `asyncio.to_thread`)
-**Frontend:** Next.js 16 · React 19 · TypeScript · Tailwind
-**Infra:** Docker Compose (3 services) · GitHub Actions → GHCR · ruff · pytest
-
----
-
-## Project structure
-
-```
-api/          FastAPI app - routes, schemas, WebSocket streaming, guardrail wiring
-agents/       LangGraph war room - supervisor + agent1/2/3, MCP client, ReAct loop
-rag/          Hybrid retrieval - bm25, fusion (RRF), rerank (cross-encoder), retriever
-mcp_server/   FastMCP server - retention policy, competitor intel, data-backed CRM tools
-db/           Raw-SQL SQLite layer - customers, recommendations, crm, meta (+ schema.sql)
-guardrails/   PII masking, policy-ceiling, grounding, injection
-eval/         Live LangSmith eval - war-room run as a churn-eval experiment (completeness / quality / guardrails)
-src/          ML - data loader, XGBoost training, SHAP explainability
-frontend/     Next.js dashboard + live-token war-room UI
-tests/        pytest suite (api routes, websocket, mcp tools, supervisor, guardrails)
-docker/       Dockerfiles (api, mcp, frontend)
-.github/      CI - ruff + pytest + GHCR image builds
-```
-
----
-
-## Testing & CI
-
-```bash
-pip install -r requirements-test.txt   # light deps only (no ML stack)
-pytest          # unit suite: API routes, WebSocket, MCP tools, supervisor routing, guardrails
-ruff check .    # critical-error lint gate
-```
-
-The unit suite covers the system surfaces without the heavy ML/LLM stack — it stubs the model/graph boundaries and mocks nothing it doesn't own, so it runs in seconds. The full model → RAG → MCP → agent path is integration-tested via Docker.
-
-CI (`.github/workflows/ci.yml`): **lint** (ruff) → **test** (pytest) → **images** (buildx builds all three Dockerfiles and pushes to **GHCR** on push, tagged `latest` + short SHA, with layer caching). PRs run lint + test only.
-
----
-
-## Screenshots
-
-_Add screenshots of the dashboard and the live-streaming war room to `docs/screenshots/` and embed them here._
+| `GET` | `/api/customers/{id}` | features + precomputed SHAP drivers |
+| `WS` | `/api/analyze/{id}/ws` | run the war room, stream tokens and agent results |
+| `GET` | `/api/logs` | drafted retention offers |
+| `GET` | `/api/metrics` | model metrics + modelled business value |

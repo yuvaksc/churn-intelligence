@@ -1,0 +1,52 @@
+# Root project: makes every package importable after `pip install -e .`
+# (for running scripts such as `python -m churn_ml.pipeline`).
+# Dependencies stay in the requirements*.txt files.
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "churn-intelligence"
+version = "0.2.0"
+requires-python = ">=3.12"
+
+[tool.setuptools.packages.find]
+where = [
+    "packages/data",
+    "packages/ml",
+    "packages/rag",
+    "packages/agents",
+    "packages/evals",
+    "services/api",
+    "services/mcp",
+]
+
+[tool.setuptools.package-data]
+churn_data = ["db/*.sql"]
+
+# ── Tooling ──────────────────────────────────────────────────────────────────
+[tool.mypy]
+python_version = "3.12"
+ignore_missing_imports = true
+warn_unused_ignores = true
+check_untyped_defs = true
+mypy_path = "packages/data:packages/ml:packages/rag:packages/agents:packages/evals:services/api:services/mcp"
+explicit_package_bases = true
+
+[[tool.mypy.overrides]]
+# Large third-party AI/ML packages: mypy crashes analysing some of them (groq, langsmith),
+# and their types add nothing to checking our own code.
+module = ["groq.*", "langchain_groq.*", "langsmith.*", "langchain.*", "langchain_core.*",
+          "langgraph.*", "mlflow.*", "shap.*", "xgboost.*", "sentence_transformers.*",
+          "fastembed.*", "mcp.*", "fastmcp.*", "transformers.*", "torch.*"]
+follow_imports = "skip"
+
+[tool.coverage.run]
+source = ["packages", "services"]
+omit = ["*/build_index.py", "*/retrieval.py", "*/generation.py", "*/agent_eval.py",
+        "*/legacy/*", "*/holdout_report.py", "*/pipeline.py", "*/train.py",
+        "*/shap_explainer.py", "*/evaluate.py"]
+
+[tool.coverage.report]
+show_missing = false
+skip_empty = true

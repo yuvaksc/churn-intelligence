@@ -14,7 +14,7 @@ sequenceDiagram
     participant G as LangGraph war room
     participant MCP as MCP server
     participant LLM as Groq
-    participant DB as SQLite
+    participant DB as Postgres
 
     U->>API: WS /api/analyze/{id}/ws
     API->>DB: load customer features
@@ -66,42 +66,60 @@ A hard `MAX_STEPS` cap and the re-gather cap guarantee termination — a lesson 
 
 ## Data model
 
-The `api` process is the **single writer**; the MCP server issues read-only `SELECT`s for its data-backed tools. Raw SQL, no ORM (`sqlite3` + `asyncio.to_thread`), schema in `db/schema.sql`.
+Postgres (Supabase in production, the pgvector container locally) with raw SQL — psycopg 3,
+no ORM, blocking calls wrapped in `asyncio.to_thread`. Schema: `supabase/migrations/`, applied
+by `supabase db push` in production and by the compose `db` container on first start. The API
+writes recommendations; the MCP server only reads (CRM tools); batch jobs write scores.
 
 ```mermaid
 erDiagram
+    customers ||--o{ predictions : "scored by"
+    customers ||--o{ crm_tickets : "has"
     customers {
-        INTEGER customer_id PK "pandas test-split index"
-        REAL    risk_score
-        TEXT    risk_label
-        INTEGER true_label
-        TEXT    all_features "JSON — full feature dict"
-        TEXT    top_shap_drivers "JSON"
+        bigint customer_id PK "test-split index"
+        float  risk_score "latest calibrated score"
+        text   risk_label
+        int    true_label
+        jsonb  all_features "raw features fed to the agents"
+        jsonb  top_shap_drivers "from the scoring job (SHAP)"
+        text   model_version
+    }
+    predictions {
+        bigint id PK
+        bigint customer_id FK
+        text   model_version
+        float  risk_score
+        jsonb  shap_drivers
     }
     recommendations {
-        INTEGER id PK
-        TEXT    log_id
-        TEXT    customer_id "TEST-{idx}"
-        REAL    risk_score
-        TEXT    offer_text
-        TEXT    status
-        TEXT    created_at
+        bigint id PK
+        text   log_id
+        text   customer_id "TEST-{idx}"
+        text   offer_text
+        text   status "PENDING_CONTACT"
     }
     crm_tickets {
-        INTEGER id PK
-        INTEGER customer_id
-        TEXT    subject
-        TEXT    category
-        TEXT    status
-        TEXT    priority
+        bigint id PK
+        bigint customer_id FK
+        text   subject
+        text   status
+        text   priority
     }
-    meta {
-        TEXT key PK
-        TEXT value "threshold, seed_version, ..."
+    rag_documents {
+        text   doc_id PK
+        text   content
+        text   churn_reason
+        text   contract
+        text   internet_service
+        vector embedding "384-d, HNSW"
+        tsvector fts "full-text"
     }
 ```
 
-Tables are linked logically (by `customer_id`) but not FK-constrained — `customers` uses the integer split index, while `recommendations` stores the display id `TEST-{idx}`. `customers` and `crm_tickets` are **seeded** at startup from the model/test-split; `recommendations` accumulate per run.
+`customers`, `predictions` and `crm_tickets` are written by `python -m churn_ml.scoring --seed`
+(re-scoring alone: `python -m churn_ml.scoring`); `rag_documents` by `python -m churn_rag.pg_index`;
+`recommendations` accumulate per war-room run. Row-level security is enabled on every table with no
+policies, so Supabase's public REST API cannot read any of it.
 
 ## Safety & evaluation flow
 
@@ -113,11 +131,11 @@ flowchart TD
     PII --> POL[policy-ceiling check]
     POL --> GRD[grounding / citation check]
     GRD --> RESP[response + guardrail report]
-    RUN -->|live, per run| EVAL[war-room run = experiment on churn-eval: completeness / quality / guardrails]
+    RUN -->|after done| EVAL[LangSmith experiments: churn-warroom + churn-rag-golden]
 ```
 
 - **Guardrails** run inline on the drafted offer for every request (both POST and WS paths) and never block hard (this is an internal analyst tool) — violations are flagged on the response.
-- **Eval** runs **live** as part of every analysis: the WebSocket attaches `eval.experiment_callbacks(...)` to the war-room run so the actual graph execution is traced *as an experiment run* under the `churn-eval` dataset (its own full waterfall, linked to the same-label golden archetype). After the `done` frame, `eval.score_run(...)` attaches three feedback metrics — `output_completeness` (a deterministic check that the run produced all the JSON elements the archetype has for its risk label), `warroom_quality` (a holistic Groq LLM-judge: overall score + the reasoning behind it), and `guardrails` (did the offer's PII / policy-ceiling / grounding checks all pass; offer runs only). Each analysis is its own experiment (`churn-warroom-<customer>-<time>`), so runs never collapse into repetitions of the shared archetype example. Best-effort — a no-op when tracing is off, and it never delays the UI. The three golden customers are per-label **archetypes** of the expected output (linked by risk label, not matched per customer).
+- **Evals** run after every analysis, once the UI has its answer (`churn_evals/live.py`): the analysis is one LangSmith trace (`war-room · customer <id>`), and is recorded as an experiment on `churn-warroom` (routing, policy tool before offer, guardrails, citations, LLM-judge quality) and, for HIGH risk, on `churn-rag-golden` (recall / precision / nDCG @3/5/10, MRR, citation accuracy, LLM-judge faithfulness and relevance). The same customer always attaches to the same dataset example, so prompt versions are compared side by side. Best-effort: a no-op when tracing is off.
 
 ## Streaming internals
 

@@ -1,0 +1,24 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "services": {
+    "web": {
+      "root": "apps/web/"
+    },
+    "api": {
+      "root": "./",
+      "entrypoint": "services/api/vercel_entry.py:app",
+      "installCommand": "pip install -r requirements-serve.txt",
+      "functions": {
+        "services/api/vercel_entry.py": {
+          "maxDuration": 300,
+          "excludeFiles": "{tests/**,apps/**,docs/**,docker/**,scripts/**,supabase/**,data/**,mlruns/**,models/reports/**,**/__pycache__/**}"
+        }
+      }
+    }
+  },
+  "rewrites": [
+    { "source": "/api/(.*)", "destination": { "service": "api" } },
+    { "source": "/health", "destination": { "service": "api" } },
+    { "source": "/(.*)", "destination": { "service": "web" } }
+  ]
+}

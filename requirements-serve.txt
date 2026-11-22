@@ -1,0 +1,30 @@
+# requirements-serve.txt — API runtime only (the Vercel Python function).
+#
+# No training stack: no torch, sentence-transformers, shap or mlflow. Embeddings and
+# reranking run on ONNX Runtime via fastembed (EMBEDDER=fastembed), same models as local.
+# Exact pins = the versions the app was built and tested with locally; the champion
+# pipeline must be unpickled with the same scikit-learn/xgboost it was trained with.
+fastapi==0.115.9
+uvicorn[standard]==0.48.0
+pydantic==2.13.4
+python-multipart==0.0.29
+httpx==0.28.1
+psycopg[binary]==3.2.9
+python-dotenv==1.2.4
+websockets==15.0.1
+
+langgraph==1.2.24
+langchain-core==1.8.4
+langchain-groq==1.2.1
+langsmith==0.15.1
+mcp==1.27.1
+fastmcp==3.4.0
+
+numpy==1.26.4
+pandas==2.2.2
+scipy==1.14.1
+scikit-learn==1.5.2
+xgboost-cpu==2.1.1      # CPU-only wheel: same model format, far smaller than `xgboost`
+joblib==1.4.2
+fastembed==0.9.1
+onnxruntime==1.21.0

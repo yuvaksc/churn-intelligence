@@ -1,22 +1,25 @@
+# requirements_agents.txt — LangGraph agents, MCP client, RAG models. Exact pins (see requirements.txt).
+
 # LangChain + LangGraph
-langchain>=1.3.0
-langchain-core>=1.4.0
-langchain-google-genai>=4.2.2
-langchain-groq>=1.1.0
-langgraph>=1.2.0
+langchain==1.5.2
+langchain-core==1.8.4
+langchain-google-genai==4.5.2
+langchain-groq==1.2.1
+langgraph==1.2.24
+langsmith==0.15.1
 
-# MCP client (HTTP/SSE transport to mcp-server container)
-fastmcp>=0.1.0
-httpx>=0.28.1
+# MCP client (HTTP/SSE transport to mcp-server container).
+# fastmcp 2.x breaks the MCP server, and an unpinned install picked 4.x; 3.4.0 is tested.
+fastmcp==3.4.0
+httpx==0.28.1
 
-# Vector store + embeddings
-# Pinned: the persisted store format is version-specific — a pre-1.0 store panics
-# 1.0.x's Rust core on open. Keep in lockstep with whatever built data/chroma_db.
-chromadb==1.0.15
-sentence-transformers>=3.0.0
+# Embeddings + cross-encoder reranker for RAG (vectors live in Postgres/pgvector).
+# Serverless (Vercel) uses fastembed/ONNX instead — see requirements-serve.txt.
+sentence-transformers==4.1.0
+transformers==4.57.6
 
 # Google Gen AI SDK
-google-genai>=1.75.0
+google-genai==3.6.1
 
 # Env management
-python-dotenv>=1.0.0
+python-dotenv==1.2.4

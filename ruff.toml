@@ -4,7 +4,7 @@
 # existing codebase. Broaden `select` later to add style enforcement.
 
 target-version = "py312"
-extend-exclude = [".claude", "data", "models", "frontend"]
+extend-exclude = ["./.claude", "./data", "./models", "./apps"]
 
 [lint]
 select = ["E9", "F63", "F7", "F82"]

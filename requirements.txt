@@ -1,10 +1,15 @@
+# requirements.txt — data + ML stack (training, batch scoring, retrain workflow).
+# Exact pins: the versions this project was built and tested with. Loose ">=" ranges
+# let a fresh install pick new major versions (and make pip search for a long time).
+# The Docker image swaps xgboost for xgboost-cpu (same model format, no ~200 MB of
+# NVIDIA libraries); see docker/api.Dockerfile.
 pandas==2.2.2
 numpy==1.26.4
-scikit-learn==1.5.1
+scikit-learn==1.5.2
 xgboost==2.1.1
 shap==0.46.0
-matplotlib==3.9.2
-seaborn==0.13.2
 joblib==1.4.2
-python-dotenv==1.0.1
-imbalanced-learn>=0.12.0
+python-dotenv==1.2.4
+psycopg[binary]==3.2.9
+mlflow==3.12.0
+scipy==1.14.1

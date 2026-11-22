@@ -19,35 +19,36 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # ── CPU-only PyTorch (CRITICAL) ───────────────────────────────────────────────
-# sentence-transformers (used by ChromaDB embeddings) depends on torch.
+# sentence-transformers (RAG embeddings + cross-encoder reranker) depends on torch.
 # By default pip installs the CUDA build — ~2.5GB of NVIDIA packages you do
 # NOT need on CPU. That bloat is what crashes the build with an OOM/EOF error.
 # Installing the CPU-only wheel FIRST means sentence-transformers finds torch
 # already satisfied and won't pull the CUDA version.
+# (Unpinned on purpose for now: changing this line invalidates the cached ~180 MB torch layer.)
 RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
 
 # ── Remaining Python dependencies ─────────────────────────────────────────────
+# All pinned to exact versions. xgboost → xgboost-cpu: the same model format without
+# ~200 MB of NVIDIA libraries (this container has no GPU).
 COPY requirements.txt requirements_agents.txt requirements_api.txt ./
-RUN pip install --no-cache-dir \
+RUN sed -i 's/^xgboost==/xgboost-cpu==/' requirements.txt && \
+    pip install --no-cache-dir \
     -r requirements.txt \
     -r requirements_agents.txt \
     -r requirements_api.txt
 
 # ── Application code ──────────────────────────────────────────────────────────
-COPY src/        ./src/
-COPY api/        ./api/
-COPY agents/     ./agents/
-COPY rag/        ./rag/
-COPY mcp_server/ ./mcp_server/
-COPY db/         ./db/
-COPY guardrails/ ./guardrails/
-COPY eval/       ./eval/
+# packages/* are the shared libraries; services/mcp is included so the stdio
+# MCP transport (`python -m mcp_server.server`) still works inside this image.
+COPY packages/   ./packages/
+COPY services/api/ ./services/api/
+COPY services/mcp/ ./services/mcp/
 
 # Mount points for bind-mounted volumes
 RUN mkdir -p /app/models /app/data
 
 # ── Environment ───────────────────────────────────────────────────────────────
-ENV PYTHONPATH=/app
+ENV PYTHONPATH=/app/packages/data:/app/packages/ml:/app/packages/rag:/app/packages/agents:/app/packages/evals:/app/services/api:/app/services/mcp
 ENV MCP_TRANSPORT=sse
 # MCP_SERVER_URL is injected by docker-compose
 

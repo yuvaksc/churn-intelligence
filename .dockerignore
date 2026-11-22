@@ -9,14 +9,17 @@ __pycache__/
 *.md
 
 # Frontend build artifacts (rebuilt inside the container)
-frontend/node_modules/
-frontend/.next/
-frontend/.env.local
+apps/web/node_modules/
+apps/web/.next/
+apps/web/.env.local
 
 # Large runtime directories — bind-mounted at runtime, never COPYed
 models/
 data/
 
 # Test/dev files
-evaluate.py
+tests/
+docs/
 verify.py
+
+mlruns/

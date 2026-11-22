@@ -1,16 +1,20 @@
-data/chroma_db
-models/
+# Trained artifacts are local, except the serving champion (Vercel deploys from git).
+models/*
+!models/champion.joblib
+!models/champion.json
 verify.py
 .claude
 
 # Secrets — never commit
 .env
 
-# SQLite app database (created at runtime / seeded)
-data/app.db
-data/app.db-wal
-data/app.db-shm
 
 # Python bytecode (all packages)
 __pycache__/
 *.pyc
+# MLflow tracking store + model registry (local)
+mlruns/
+mcp_server.log
+
+# test coverage data
+.coverage

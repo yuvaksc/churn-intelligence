@@ -18,11 +18,11 @@ FROM node:20-slim AS builder
 WORKDIR /app
 
 # Install dependencies first (cached if package.json unchanged)
-COPY frontend/package.json frontend/package-lock.json ./
+COPY apps/web/package.json apps/web/package-lock.json ./
 RUN npm ci --prefer-offline
 
 # Copy source code
-COPY frontend/ ./
+COPY apps/web/ ./
 
 # NEXT_PUBLIC_* variables are embedded at BUILD time, not runtime.
 # The browser will call this URL directly, so it must be reachable
@@ -30,6 +30,9 @@ COPY frontend/ ./
 # Override this build arg in docker-compose if your API is elsewhere.
 ARG NEXT_PUBLIC_API_BASE=http://localhost:8000
 ENV NEXT_PUBLIC_API_BASE=$NEXT_PUBLIC_API_BASE
+# Optional: enables Clerk sign-in + org switcher (empty = local dev without auth)
+ARG NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=
+ENV NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=$NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
 
 # Build the production app
 RUN npm run build
