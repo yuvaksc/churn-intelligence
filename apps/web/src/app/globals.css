@@ -6,6 +6,11 @@
 */
 
 :root {
+  /* fonts (loaded in layout.tsx from Google Fonts) */
+  --font-display: "Archivo";
+  --font-body:    "DM Sans";
+  --font-mono:    "JetBrains Mono";
+
   /* surfaces */
   --bg:        #0a0e14;
   --surface:   #121821;

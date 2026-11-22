@@ -1,24 +1,14 @@
 // src/app/layout.tsx
 import type { Metadata } from "next";
-import { Archivo, DM_Sans, JetBrains_Mono } from "next/font/google";
 import Link from "next/link";
 import "./globals.css";
 
-const display = Archivo({
-  subsets: ["latin"],
-  weight: ["600", "700", "800", "900"],
-  variable: "--font-display",
-});
-const body = DM_Sans({
-  subsets: ["latin"],
-  weight: ["400", "500", "600"],
-  variable: "--font-body",
-});
-const mono = JetBrains_Mono({
-  subsets: ["latin"],
-  weight: ["400", "500", "700"],
-  variable: "--font-mono",
-});
+// Fonts load from Google Fonts in the browser. (next/font/google downloads them at build
+// time, and those files went missing in the Vercel multi-service build.) The CSS
+// variables --font-display / --font-body / --font-mono are set in globals.css.
+const FONTS_CSS =
+  "https://fonts.googleapis.com/css2?family=Archivo:wght@600;700;800;900" +
+  "&family=DM+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap";
 
 export const metadata: Metadata = {
   title: "Churn War Room",
@@ -38,7 +28,12 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body className={`${display.variable} ${body.variable} ${mono.variable}`}>
+      <head>
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
+        <link rel="stylesheet" href={FONTS_CSS} precedence="default" />
+      </head>
+      <body>
         <header
           className="sticky top-0 z-50 flex items-center justify-between px-6 h-14 border-b backdrop-blur"
           style={{
