@@ -22,7 +22,7 @@ from api.routes import customers, health, logs, metrics, ws
 
 def _warm_models() -> None:
     from churn_agents.deps import default_deps
-    from churn_rag.rerank import warm_up
+    from churn_rag.retrieve import warm_up
     default_deps().predictor.threshold      # first attribute access builds the shared predictor
     warm_up()
 

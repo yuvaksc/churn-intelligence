@@ -28,7 +28,7 @@ class FakePredictor:
         }
 
 
-# ── churn_rag.ports.Retriever ────────────────────────────────────────────────
+# ── churn_rag.retrieve.Retriever ────────────────────────────────────────────────
 class FakeRetriever:
     def __init__(self, docs: list[dict] | None = None):
         self.docs = docs if docs is not None else [

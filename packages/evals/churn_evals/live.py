@@ -32,7 +32,7 @@ def tracing_on() -> bool:
 
 def relevance_labels(customer_raw: dict) -> dict[str, int]:
     from churn_data.db import tx
-    from churn_rag.documents import monthly_band, tenure_bucket
+    from churn_rag.index import monthly_band, tenure_bucket
     with tx() as c:
         rows = c.execute(
             "select doc_id, payment_method from rag_documents where churn_label = 1 and contract = %s "

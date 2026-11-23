@@ -35,7 +35,7 @@ jobs:
         run: >
           mypy packages/data/churn_data
           packages/ml/churn_ml/economics.py packages/ml/churn_ml/predictor.py packages/ml/churn_ml/model.py
-          packages/rag/churn_rag/ports.py packages/rag/churn_rag/pg_retriever.py packages/rag/churn_rag/documents.py
+          packages/rag/churn_rag/retrieve.py packages/rag/churn_rag/index.py
           packages/agents/churn_agents/deps.py packages/agents/churn_agents/tools/gateway.py
           packages/agents/churn_agents/prompts.py packages/agents/churn_agents/guardrails
           packages/evals/churn_evals/evaluators.py packages/evals/churn_evals/live.py

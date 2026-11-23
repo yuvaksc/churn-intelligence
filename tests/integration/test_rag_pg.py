@@ -8,10 +8,9 @@ import numpy as np
 import pytest
 
 import churn_rag.embed as embed
-import churn_rag.pg_retriever as pr
-from churn_rag.documents import Doc
-from churn_rag.pg_index import upsert
-from churn_rag.pg_retriever import PgHybridRetriever
+import churn_rag.retrieve as pr
+from churn_rag.index import Doc, upsert
+from churn_rag.retrieve import PgHybridRetriever
 
 
 class HashEmbedder:

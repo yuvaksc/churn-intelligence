@@ -3,7 +3,7 @@
 The graph depends on interfaces, never on concrete clients:
 
     predictor        churn_ml.predictor.Predictor   (calibrated risk score)
-    retriever        churn_rag.ports.Retriever  (similar historical churners)
+    retriever        churn_rag.retrieve.Retriever  (similar historical churners)
     analytical_llm / creative_llm   () -> chat model (Groq in production)
     tools            () -> async context of ToolGateway (MCP tools for Agent 3)
 
@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from churn_ml.predictor import Predictor
-from churn_rag.ports import Retriever
+from churn_rag.retrieve import Retriever
 
 
 @dataclass
@@ -48,7 +48,7 @@ def _predictor():
 
 
 def _retriever():
-    from churn_rag.pg_retriever import PgHybridRetriever
+    from churn_rag.retrieve import PgHybridRetriever
     return PgHybridRetriever()
 
 

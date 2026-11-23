@@ -11,7 +11,7 @@
 #   docker compose up -d --build
 #   docker compose exec api python -m churn_ml.retrain --promote force   # train + register champion
 #   docker compose exec api python -m churn_ml.scoring --seed           # customers + scores + CRM
-#   docker compose exec api python -m churn_rag.pg_index                # RAG documents
+#   docker compose exec api python -m churn_rag.index                # RAG documents
 #   open http://localhost:3000
 #
 # Inside the Docker network services reach each other by name (db:5432, mcp-server:8001);

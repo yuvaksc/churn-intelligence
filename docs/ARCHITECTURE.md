@@ -117,7 +117,7 @@ erDiagram
 ```
 
 `customers`, `predictions` and `crm_tickets` are written by `python -m churn_ml.scoring --seed`
-(re-scoring alone: `python -m churn_ml.scoring`); `rag_documents` by `python -m churn_rag.pg_index`;
+(re-scoring alone: `python -m churn_ml.scoring`); `rag_documents` by `python -m churn_rag.index`;
 `recommendations` accumulate per war-room run. Row-level security is enabled on every table with no
 policies, so Supabase's public REST API cannot read any of it.
 

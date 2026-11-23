@@ -1,23 +1,31 @@
-"""churn_rag.documents — ingest and clean the RAG corpus (one doc per profile).
+"""churn_rag.index — build the RAG corpus and index it into pgvector.
 
-Profiles are short and self-contained, so they are NOT chunked; instead each
-carries metadata that retrieval and evals can filter or grade on:
+    python -m churn_rag.index              # needs DATABASE_URL
+    python -m churn_rag.index --limit 200  # quick local run
+
+Corpus: one document per TRAIN-split customer profile. Profiles are short and
+self-contained, so they are NOT chunked; instead each carries metadata that retrieval
+and evals can filter or grade on:
 
     doc_id, churn_label, churn_reason, reason_category, contract, internet_service,
     payment_method, tenure_bucket, monthly_band, source, embedding_model
 
-Only TRAIN-split customers are indexed, and a churner's reason is metadata, never
-a model feature — the same no-leakage rule as before.
+Only TRAIN-split customers are indexed, and a churner's reason is metadata, never a
+model feature (no leakage). Indexing is idempotent: doc_id is the primary key, so
+re-running updates rows in place.
+
+pandas / scikit-learn are imported inside build_corpus() only: tenure_bucket() and
+monthly_band() are also used by the API (churn_evals.live), which runs without them.
 """
 
 from __future__ import annotations
 
+import argparse
+import json
 import re
 from dataclasses import dataclass, field
 
-import pandas as pd
-
-from churn_data.loader import clean, encode_for_gbm, engineer_features, load_raw, three_way_split
+from churn_rag.embed import get_embedder, to_pgvector
 
 REASON_CATEGORY = {
     "Competitor made better offer": "competitor", "Competitor had better devices": "competitor",
@@ -65,7 +73,7 @@ def clean_text(text: str) -> str:
     return _WS.sub(" ", text).strip()
 
 
-def profile_text(row: pd.Series, label: int) -> str:
+def profile_text(row, label: int) -> str:
     """One train-split customer as a searchable "Key: value | ..." document."""
     def yes(v) -> str:
         return "Yes" if str(v).strip() in ("Yes", "1", "1.0") else "No"
@@ -99,6 +107,8 @@ def profile_text(row: pd.Series, label: int) -> str:
 def build_corpus(include_reason: bool = True) -> list[Doc]:
     """include_reason appends a churner's documented reason to the text (the
     'profile+reason' template, which won the retrieval ablation)."""
+    from churn_data.loader import clean, encode_for_gbm, engineer_features, load_raw, three_way_split
+
     raw = load_raw()
     eng = engineer_features(clean(raw))
     gbm, _ = encode_for_gbm(eng)
@@ -129,3 +139,55 @@ def build_corpus(include_reason: bool = True) -> list[Doc]:
             },
         ))
     return docs
+
+
+# ── Indexing into pgvector ─────────────────────────────────────────────────
+
+BATCH = 256
+
+_SQL = """insert into rag_documents
+          (doc_id, content, churn_label, churn_reason, reason_category, contract, internet_service,
+           payment_method, tenure_bucket, monthly_band, metadata, embedding_model, embedding)
+          values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::vector)
+          on conflict (doc_id) do update set
+            content = excluded.content, churn_label = excluded.churn_label,
+            churn_reason = excluded.churn_reason, reason_category = excluded.reason_category,
+            contract = excluded.contract, internet_service = excluded.internet_service,
+            payment_method = excluded.payment_method, tenure_bucket = excluded.tenure_bucket,
+            monthly_band = excluded.monthly_band, metadata = excluded.metadata,
+            embedding_model = excluded.embedding_model, embedding = excluded.embedding,
+            ingested_at = now()"""
+
+
+def upsert(docs: list[Doc], embedder=None) -> int:
+    from psycopg.types.json import Jsonb
+
+    from churn_data.db import tx
+
+    embedder = embedder or get_embedder()
+    for start in range(0, len(docs), BATCH):
+        batch = docs[start:start + BATCH]
+        vectors = embedder.embed([d.content for d in batch])
+        params = [[d.doc_id, d.content, d.churn_label, d.churn_reason or None, d.reason_category,
+                   d.metadata.get("contract"), d.metadata.get("internet_service"),
+                   d.metadata.get("payment_method"), d.metadata.get("tenure_bucket"),
+                   d.metadata.get("monthly_band"), Jsonb(d.metadata), embedder.name, to_pgvector(v)]
+                  for d, v in zip(batch, vectors)]
+        with tx() as c:
+            with c.cursor() as cur:
+                cur.executemany(_SQL, params)
+    return len(docs)
+
+
+def main(argv=None) -> None:
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--limit", type=int, default=0)
+    args = ap.parse_args(argv)
+    docs = build_corpus()
+    if args.limit:
+        docs = docs[: args.limit]
+    print(json.dumps({"indexed": upsert(docs), "churners": sum(d.churn_label for d in docs)}))
+
+
+if __name__ == "__main__":
+    main()

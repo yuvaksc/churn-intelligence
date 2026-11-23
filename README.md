@@ -98,6 +98,12 @@ telco data → 60/20/20 stratified split
 
 ### RAG (`packages/rag`)
 
+| file | role |
+|---|---|
+| `embed.py` | text → 384-d vectors (sentence-transformers locally, ONNX via fastembed on Vercel) |
+| `index.py` | build the corpus from the train split and upsert it into pgvector: `python -m churn_rag.index` |
+| `retrieve.py` | the `Retriever` contract Agent 2 uses, hybrid search, cross-encoder rerank |
+
 * **Corpus:** one document per train-split customer; profiles are short, so they are **not chunked**.
   Each carries metadata (churn reason and its category, contract, internet type, payment method,
   tenure bucket, charge band). Test customers are never indexed.
@@ -227,7 +233,7 @@ export PYTHONPATH="packages/data:packages/ml:packages/rag:packages/agents:packag
 
 python -m churn_ml.retrain --promote force   # train, register in MLflow, export the champion
 python -m churn_ml.scoring --seed            # customers + scores + SHAP + CRM tickets
-python -m churn_rag.pg_index                 # embed + index the RAG corpus
+python -m churn_rag.index                 # embed + index the RAG corpus
 
 python scripts/dev_api.py                    # API on :8000 (+ MCP server on :8001)
 cd apps/web && npm ci && npm run build && npx next start -p 3000
@@ -244,7 +250,7 @@ Or run everything in containers: `docker compose up -d --build` (see the header 
    (port 5432, for loading data from your machine) and the **Transaction pooler** URI (port
    6543, for Vercel).
 2. **Data:** with `DATABASE_URL` set to the session pooler URI, run `churn_ml.scoring --seed` and
-   `churn_rag.pg_index` once from your machine. `models/champion.joblib` and `models/champion.onnx` are the only tracked
+   `churn_rag.index` once from your machine. `models/champion.joblib` and `models/champion.onnx` are the only tracked
    model file and ships with the deploy.
 3. **Vercel:** import the repo (root directory: the repo root). `vercel.json` defines two
    services (`web` → `apps/web`, `api` → `services/api/vercel_entry.py`) behind one domain, so
